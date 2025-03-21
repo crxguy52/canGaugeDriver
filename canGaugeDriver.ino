@@ -28,7 +28,7 @@ Timer1 is used to drive variable frequency outputs
 #define LIGHT_ON            HIGH    // Value to turn light on
 #define LIGHT_OFF           LOW     // Value to turn light off
 #define F_CPU               16000000
-// #define DEBUG               1
+//#define DEBUG               1
 
 // Scaling Values
 #define ADC2VBUS            0.025   // Convert ADC reading to bus voltage
@@ -86,14 +86,18 @@ Timer1 is used to drive variable frequency outputs
 // Calculate the prescaler and compare value
 #define INIT_LIGHT_ON_CTS     INIT_LIGHT_ON_S*MAIN_INT_FREQ_HZ
 #define COUNT_INTVL_V_BUS     MAIN_INT_FREQ_HZ / FREQ_V_BUS_HZ
-#define TIMER0_COMPARE_VALUE  (F_CPU / (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ) - 1)
+#define TIMER0_COMPARE_VALUE  100       // Initialize fast so it updates quickly
 #define TIMER1_FREQ           (F_CPU / TIMER1_PRESCALER)
-#define TIMER1_COMPARE_VALUE  pow(2, 16) - 1      // Initialize to the lowest
+#define TIMER1_COMPARE_VALUE  100       // Initialize fast so it updates quickly
 #define WARN_BLINK_COUNTS     TIMER1_FREQ / 2*WARN_BLINK_HZ
 
-// Define minimum values that can be represented with the 16 bit timer
-#define MIN_RPM               TIMER1_FREQ/(2*(pow(2, 16)-1)*RPM2HZ)
-#define MIN_MPH               TIMER1_FREQ/(2*(pow(2, 16)-1)*MPH2HZ)
+// Define minimum values that can will enable the output
+// Make it larger than the theoretical minimum to keep update rates reasonalbe, since it only updates
+// When the timer interrupts happen
+//#define MIN_RPM               TIMER1_FREQ/(2*(pow(2, 16)-1)*RPM2HZ)
+//#define MIN_MPH               TIMER1_FREQ/(2*(pow(2, 16)-1)*MPH2HZ)
+#define MIN_RPM               200
+#define MIN_MPH               5
 
 // Set CAN tranciever chip select pin
 MCP_CAN CAN(SPI_CS_PIN);    
@@ -167,7 +171,7 @@ void timer1_init() {
 void setup()
 {
     Serial.begin(115200);       // USB serial port
-    Serial1.begin(115200);  // Pins 0 and 1
+//    Serial1.begin(115200);  /// Pins 0 and 1
     
     while (CAN_OK != CAN.begin(CAN_500KBPS))    // init can bus : baudrate = 500k
     {
@@ -233,6 +237,10 @@ void setup()
   float v_bus       = 0;
   volatile bool flag_mainloop = 0;
   bool init_cpt     = 0;
+  uint8_t coolPWMval = 0;
+  bool flag_oil_low   = 0;
+  bool flag_cool_hot  = 0;
+  bool flag_v_low     = 0;
 
   // Counter variables
   uint16_t loopCount                    = 0;
@@ -248,9 +256,9 @@ ISR(TIMER0_COMPA_vect) {
 
 ISR(TIMER1_COMPA_vect) {
   // Tach interrupt
-  // if(rpm > MIN_RPM){         
+   if(rpm > MIN_RPM){         
     PORTB ^= (1 << PB7);        // Digital pin 11
-  // }
+   }
   OCR1A += count_intvl_tach;
 }
 
@@ -276,7 +284,6 @@ void loop(){
   if(flag_mainloop == 1){
 
     flag_mainloop = 0;  
-    bool warn_blink_flag_tmp = 0;
 
 
     if(loopCount >= INIT_LIGHT_ON_CTS && !init_cpt){
@@ -295,6 +302,7 @@ void loop(){
     if(CAN_MSGAVAIL == CAN.checkReceive()){
       // If there's new data, read it
       digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage      
+      
       // read data,  len: data length, buf: data buf
       CAN.readMsgBuf(&len, buf);                    
       unsigned long canId = CAN.getCanId();
@@ -314,11 +322,7 @@ void loop(){
           // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
           if(rpm > MIN_RPM){
             count_intvl_tach = TIMER1_FREQ/(2*rpm*RPM2HZ);
-          } else {
-            // if the rpm gets too low it'll try to set the interval greater 
-            // than the 2^16 counts, limit it to the timer max value
-            count_intvl_tach = pow(2, 16) - 1;
-          }
+          } 
 
           if(rpm > RPM_SHIFT){
             digitalWrite(PIN_CRUISE, LIGHT_ON);
@@ -331,7 +335,7 @@ void loop(){
         case ID_VEHICLE_SPEED_AND_DISTANCE:
           // Decode vehicle speed
           kph = ((buf[0] & 0x7F) << 8 | buf[1]) * 0.015625;
-          mph = ((buf[0] & 0xFC) << 8 | buf[1]) * 0.01;
+          mph = kph * 0.6213712;
 
           // Set new interval
           // counts_switch = t_switch_s * TIMER1FREQ
@@ -341,9 +345,7 @@ void loop(){
           // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
           if(mph > MIN_MPH){
             count_intvl_speed = TIMER1_FREQ/(2*mph*MPH2HZ);
-          } else {
-            count_intvl_speed = pow(2, 16) - 1;
-          }                    
+          }             
           break;
 
         case ID_ENGINE_GENERAL_STATUS_4:
@@ -355,30 +357,30 @@ void loop(){
             t_cool = 0;
           }
 
-          uint8_t pwmVal = 0;
+          flag_cool_hot = 0;
+
           // If we're below the low value
           if(t_cool < COOL_T_LOW){
             // Lineraly interpolate between 0 and COOL_PWM_LOW
-            pwmVal = (t_cool / COOL_T_LOW) * (COOL_PWM_LOW) ;
+            coolPWMval = (t_cool / COOL_T_LOW) * (COOL_PWM_LOW) ;
 
             // If we're above the low value and below the hot value
           } else if ((t_cool > COOL_T_LOW) && (t_cool < COOL_T_HIGH)){
             // Linearly interpolate between COOL_LOW and COOL_HIGH
-            pwmVal = COOL_PWM_LOW + 
+            coolPWMval = COOL_PWM_LOW + 
                       (t_cool - COOL_T_LOW) *
                       (COOL_PWM_HIGH - COOL_PWM_LOW) / (COOL_T_HIGH - COOL_T_LOW) ;
 
             // Otherwise we're above the hot value
           } else {
-            pwmVal = COOL_PWM_HIGH + 
+            coolPWMval = COOL_PWM_HIGH + 
                       (t_cool - COOL_T_HIGH) *
                       (COOL_T_HIGHHIGH - COOL_PWM_HIGH) / (COOL_T_HIGHHIGH - COOL_T_HIGH); 
-            // Set a flag to turn on the warning light
-            warn_blink_flag_tmp = 1;
+            flag_cool_hot = 1;
           }
 
           // Write PWM value
-          analogWrite(PIN_COOLANT, pwmVal);
+          analogWrite(PIN_COOLANT, coolPWMval);
           break;
 
         case ID_ENGINE_GENERAL_STATUS_5:
@@ -392,18 +394,15 @@ void loop(){
           // Set the threshold based on rpm
           float thresh = P_OIL_LOW1_PSI;
           if(rpm > P_OIL_LOW_RPM){
-            float thresh = P_OIL_LOW2_PSI;
+            thresh = P_OIL_LOW2_PSI;
           } 
 
           if(p_oil_psi < thresh){
             digitalWrite(PIN_OILP, LIGHT_ON);
-
-            if(rpm > 0){
-              warn_blink_flag_tmp = 1;
-            }
-
+            if(rpm > 100){flag_oil_low = 1;}
           } else {
             digitalWrite(PIN_OILP, LIGHT_OFF);
+            flag_oil_low = 0;
           }
 
           if(init_cpt){
@@ -415,30 +414,7 @@ void loop(){
           }
           break;
 
-        } // End decode CAN data      
-        
-        #ifdef DEBUG
-            // Serial.println("-----------------------------");
-            // Serial.print("Get data from ID: ");
-            // Serial.println(canId, HEX);
-
-            // for(int i = 0; i<len; i++)    // print the data
-            // {
-            //     Serial.print(buf[i], HEX);
-            //     Serial.print("\t");
-            // }
-            // Serial.println();
-            Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
-            Serial.print("kph = "); Serial.print(kph); Serial.print(", ");
-            Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
-            Serial.print("p_oil = "); Serial.print(p_oil_kpa); Serial.print(", ");
-            Serial.print("cel_on = "); Serial.print(cel_on); Serial.println(", ");
-          #endif   
-
-      warn_blink_flag = warn_blink_flag_tmp;
-      digitalWrite(PIN_LED, LOW); 
-
-
+        } // End decode CAN data     
     // End RX CAN data
     // If we haven't received CAN data and it's time to read bus voltage, read and transmit it       
     } else if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
@@ -459,14 +435,42 @@ void loop(){
       if(init_cpt){
         if(v_bus <= V_BUS_LOW){
           digitalWrite(PIN_ALT, LIGHT_ON);
+          if(rpm > 100){flag_v_low = 1;} else {flag_v_low = 0;}
         } else {
           digitalWrite(PIN_ALT, LIGHT_OFF);
         }
       }
-      
-      digitalWrite(PIN_LED, LOW);   // Set the LED pin high to measure CPU usage   
 
+    #ifdef DEBUG
+        // Serial.println("-----------------------------");
+        // Serial.print("Get data from ID: ");
+        // Serial.println(canId, HEX);
+
+        // for(int i = 0; i<len; i++)    // print the data
+        // {
+        //     Serial.print(buf[i], HEX);
+        //     Serial.print("\t");
+        // }
+        // Serial.println();
+        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
+        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
+        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
+        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
+        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
+        Serial.print("v_bus = "); Serial.print(v_bus); Serial.print(", ");
+        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.println(flag_v_low);
+      #endif          
     }
+
+ 
+    if( flag_oil_low | flag_cool_hot | flag_v_low ){
+      warn_blink_flag = 1;
+    } else {
+      warn_blink_flag = 0;
+      digitalWrite(PIN_SRS, LIGHT_OFF);
+    }
+ 
+    digitalWrite(PIN_LED, LOW);     
 
     loopCount += 1;   // Increment the loop counter
 
@@ -475,4 +479,3 @@ void loop(){
 
 
 // END FILE
-
