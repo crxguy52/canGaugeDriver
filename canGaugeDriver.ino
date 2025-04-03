@@ -54,7 +54,7 @@ Timer1 is used to drive variable frequency outputs
 #define WARN_BLINK_HZ       4       // When there's a warning, blink a light this fast
 #define INIT_LIGHT_ON_S     1       // Time in seconds to keep all lights on before turning off
 #define TIMER0_PRESCALER    64      // Timer0 is an 8-bit counter
-#define TIMER1_PRESCALER    1024    // Timer1 is a 16-bit counter
+#define TIMER1_PRESCALER    64    // Timer1 is a 16-bit counter
 
 // RX CAN message IDs
 #define ID_ENGINE_GENERAL_STATUS_1    201   // Contains engine_rpm
