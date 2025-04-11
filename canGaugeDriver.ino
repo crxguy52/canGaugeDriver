@@ -28,7 +28,7 @@ Timer1 is used to drive variable frequency outputs
 #define LIGHT_ON            HIGH    // Value to turn light on
 #define LIGHT_OFF           LOW     // Value to turn light off
 #define F_CPU               16000000
-//#define DEBUG               1
+//#define D/EBUG               1
 
 // Scaling Values
 #define ADC2VBUS            0.025   // Convert ADC reading to bus voltage
@@ -234,7 +234,10 @@ void setup()
   float p_oil_psi   = 0;
   bool  cel_on      = 0;
   uint16_t adc_bus  = 0;
-  float v_bus       = 0;
+  union {
+    float volts;
+    uint8_t bytes[4];
+  } v_bus;
   volatile bool flag_mainloop = 0;
   bool init_cpt     = 0;
   uint8_t coolPWMval = 0;
@@ -258,6 +261,8 @@ ISR(TIMER1_COMPA_vect) {
   // Tach interrupt
    if(rpm > MIN_RPM){         
     PORTB ^= (1 << PB7);        // Digital pin 11
+   } else {
+    PORTB &= ~(1 << PB7);        // Digital pin 11
    }
   OCR1A += count_intvl_tach;
 }
@@ -266,6 +271,8 @@ ISR(TIMER1_COMPB_vect) {
   // Speedo interrupt
   if(mph > MIN_MPH){   
     PORTD ^= (1 << PD0);        // Digital pin 3 
+  } else {
+    PORTD &= ~(1 << PD0);        // Digital pin 3 
   }
   OCR1B += count_intvl_speed;
 }
@@ -422,18 +429,14 @@ void loop(){
       digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
 
       count_end_adc += COUNT_INTVL_V_BUS;
-      adc_bus = analogRead(A0);
-      v_bus = adc_bus * ADC2VBUS;
+      v_bus.volts = analogRead(A0)* ADC2VBUS;
 
-      uint8_t tx[2] = {(adc_bus & 0xFF00) >> 8, (adc_bus & 0x00FF)};
-
-      // TODO
       // Transmit it over CAN  
-      // CAN.sendMsgBuf(ID_V_BUS, 0, 0, 2, tx);
+      CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, v_bus.bytes);
 
 
       if(init_cpt){
-        if(v_bus <= V_BUS_LOW){
+        if(v_bus.volts <= V_BUS_LOW){
           digitalWrite(PIN_ALT, LIGHT_ON);
           if(rpm > 100){flag_v_low = 1;} else {flag_v_low = 0;}
         } else {
@@ -457,7 +460,7 @@ void loop(){
         Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
         Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
         Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
-        Serial.print("v_bus = "); Serial.print(v_bus); Serial.print(", ");
+        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(", ");
         Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.println(flag_v_low);
       #endif          
     }
