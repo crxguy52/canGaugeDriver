@@ -810,16 +810,17 @@ byte MCP_CAN::sendMsg(int rtrBit)
     mcp2515_write_canMsg(txbuf_n, rtrBit);
     mcp2515_start_transmit(txbuf_n);
 
-    do {
-        uiTimeOut++;
-        res1= mcp2515_readRegister(txbuf_n-1 /* the ctrl reg is located at txbuf_n-1 */);  // read send buff ctrl reg
-        res1 = res1 & 0x08;
-    }while(res1 && (uiTimeOut < TIMEOUTVALUE));
+// 2026-Sept-9, VZ: we don't wait to wait for the message to send, that adds 163us to this function call on an EMPTY bus at 500kbuad
+//   do {
+//        uiTimeOut++;
+//        res1= mcp2515_readRegister(txbuf_n-1 /* the ctrl reg is located at txbuf_n-1 */);  // read send buff ctrl reg
+//        res1 = res1 & 0x08;
+//    }while(res1 && (uiTimeOut < TIMEOUTVALUE));
 
-    if(uiTimeOut == TIMEOUTVALUE)                                       // send msg timeout
-    {
-        return CAN_SENDMSGTIMEOUT;
-    }
+//    if(uiTimeOut == TIMEOUTVALUE)                                       // send msg timeout
+//    {
+//        return CAN_SENDMSGTIMEOUT;
+//    }
     return CAN_OK;
 
 }

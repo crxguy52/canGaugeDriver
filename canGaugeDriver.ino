@@ -329,7 +329,6 @@ void loop(){
 
     flag_mainloop = 0;  
 
-
     if(loopCount >= INIT_LIGHT_ON_CTS && !init_cpt){
       // These lights turn on for INIT_LIGHT_ON_CTS and are then off by default
       // They may be turned on or off when CAN data is received 
@@ -343,15 +342,82 @@ void loop(){
     }
 
     digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
+    
     // Check if there's CAN data available
     if(CAN_MSGAVAIL == CAN.checkReceive()){
-      // If there's new data, read it
-//      digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage      
-      
+      // If there's new data, read it          
       // read data,  len: data length, buf: data buf
       CAN.readMsgBuf(&len, buf);                    
       unsigned long canId = CAN.getCanId();
 
+      // do stuff with the received data
+      handle_received_message(canId, buf);
+        
+
+    // If we haven't received CAN data and it's time to read bus voltage, read and transmit it       
+    } else if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
+      
+      digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
+
+      count_end_adc += COUNT_INTVL_V_BUS;
+      v_bus.volts = analogRead(A0)* ADC2VBUS;
+
+      // Transmit it over CAN  
+      CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, v_bus.bytes);
+
+
+      if(init_cpt){
+        if(v_bus.volts <= V_BUS_LOW){
+          digitalWrite(PIN_ALT, LIGHT_ON);
+          if(rpm > 100){flag_v_low = 1;} else {flag_v_low = 0;}
+        } else {
+          digitalWrite(PIN_ALT, LIGHT_OFF);
+        }
+      }
+
+    #ifdef DEBUG
+        // Serial.println("-----------------------------");
+        // Serial.print("Get data from ID: ");
+        // Serial.println(canId, HEX);
+
+        // for(int i = 0; i<len; i++)    // print the data
+        // {
+        //     Serial.print(buf[i], HEX);
+        //     Serial.print("\t");
+        // }
+        // Serial.println();
+        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
+        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
+        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
+        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
+        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
+        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(", ");
+        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.println(flag_v_low);
+      #endif          
+    }
+
+ 
+    if( flag_oil_low | flag_cool_hot | flag_v_low ){
+      warn_blink_flag = 1;
+    } else {
+      warn_blink_flag = 0;
+      digitalWrite(PIN_SRS, LIGHT_OFF);
+    }
+ 
+    digitalWrite(PIN_LED, LOW);     
+
+    loopCount += 1;   // Increment the loop counter
+
+  } // End if mainloop flag
+} // End mainloop
+
+
+/**************************************************************************
+Function definitions
+**************************************************************************/
+
+static inline void handle_received_message(unsigned long canId, unsigned char buf[8]){
+ 
       // Decode the correct message
       switch(canId){
         case ID_ENGINE_GENERAL_STATUS_1:
@@ -459,64 +525,5 @@ void loop(){
           }
           break;
 
-        } // End decode CAN data     
-    // End RX CAN data
-    // If we haven't received CAN data and it's time to read bus voltage, read and transmit it       
-    } else if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
-      
-      //digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
-
-      count_end_adc += COUNT_INTVL_V_BUS;
-      v_bus.volts = analogRead(A0)* ADC2VBUS;
-
-      // Transmit it over CAN  
-      CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, v_bus.bytes);
-
-
-      if(init_cpt){
-        if(v_bus.volts <= V_BUS_LOW){
-          digitalWrite(PIN_ALT, LIGHT_ON);
-          if(rpm > 100){flag_v_low = 1;} else {flag_v_low = 0;}
-        } else {
-          digitalWrite(PIN_ALT, LIGHT_OFF);
-        }
-      }
-
-    #ifdef DEBUG
-        // Serial.println("-----------------------------");
-        // Serial.print("Get data from ID: ");
-        // Serial.println(canId, HEX);
-
-        // for(int i = 0; i<len; i++)    // print the data
-        // {
-        //     Serial.print(buf[i], HEX);
-        //     Serial.print("\t");
-        // }
-        // Serial.println();
-        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
-        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
-        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
-        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
-        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
-        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(", ");
-        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.println(flag_v_low);
-      #endif          
-    }
-
- 
-    if( flag_oil_low | flag_cool_hot | flag_v_low ){
-      warn_blink_flag = 1;
-    } else {
-      warn_blink_flag = 0;
-      digitalWrite(PIN_SRS, LIGHT_OFF);
-    }
- 
-    digitalWrite(PIN_LED, LOW);     
-
-    loopCount += 1;   // Increment the loop counter
-
-  } // End if mainloop flag
-} // End mainloop
-
-
-// END FILE
+        }   
+}
