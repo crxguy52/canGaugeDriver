@@ -1,4 +1,8 @@
 #include "src/Longan_CAN_MCP2515/mcp_can.h"
+#include "src/utils/utils.h"
+#include "hwdefs.h"
+#include "limits.h"
+#include "timers.h"
 #include <SPI.h>
 
 /*
@@ -7,7 +11,7 @@ V. Zaccardo, March 2025
 Program for a Seeed CANBed to recieve CAN data from a GM ECU
 And drive a NB Miata tach, speedo, coolant gauge, and all lights
 
-Timer0 is used to run the main loop at 1kHz
+Timer0 is used to run the main loop
   - Receives CAN messages
   - Turns lights on and off based on received values
   - Sets PWM value based on coolant value
@@ -22,188 +26,78 @@ Timer1 is used to drive variable frequency outputs
   - TIMER1 COMPC is used to blink a warning light in the event a param is out of range
 */
 
-// Constants
-#define CAN_500KBPS         16
-#define CAN_1000KBPS        18
-#define LIGHT_ON            HIGH    // Value to turn light on
-#define LIGHT_OFF           LOW     // Value to turn light off
-#define F_CPU               16000000
-//#define DEBUG               1
+//#define DEBUG     
 
-// Scaling Values
-#define ADC2VBUS            0.025   // Convert ADC reading to bus voltage
-#define RPM2HZ              0.0167  // RPM to Rev/s (Hz)
-#define MPH2HZ              1
-#define COOL_T_LOW          80      // Temperature at which coolant gauge should be on the L line
-#define COOL_PWM_LOW        50      // PWM value to make coolant gauge read L
-#define COOL_T_HIGH         120     // Temperature at which coolant gauge should be on H line
-#define COOL_PWM_HIGH       200     // PWM value to make coolant gauge read H
-#define COOL_T_HIGHHIGH     200     // Temp at which coolant gauge is pegged H
 
-// Value Thresholds
-// LFX spec is 10psi at idle, 30psi at 2,000 RPM
-#define P_OIL_LOW_RPM         2000    // Below this RPM low1 is used, above low2        
-#define P_OIL_LOW1_PSI        5
-#define P_OIL_LOW2_PSI        20
-#define V_BUS_LOW             12.5
-#define RPM_SHIFT             6800
-
-// Loop timing, Hz
-#define MAIN_INT_FREQ_HZ    250    // Timer0: runs the main loop at this frequency. Prescaler and compare value are calculated below.
-#define FREQ_V_BUS_HZ       10     // Frequency to sample and transmit bus voltage
-#define WARN_BLINK_HZ       4      // When there's a warning, blink a light this fast
-#define INIT_LIGHT_ON_S     1      // Time in seconds to keep all lights on before turning off
-
-#define TIMER1_PRESCALER    64      // Timer1 is a 16-bit counter
-
-// RX CAN message IDs
-#define ID_ENGINE_GENERAL_STATUS_1    201   // Contains engine_rpm. Transmitted at 80hz
-#define ID_VEHICLE_SPEED_AND_DISTANCE 1001  // Contains vehicle speed. Transmitted at 10hz
-#define ID_ENGINE_GENERAL_STATUS_4    1217  // Contains eng_coolant_temp. Transmitted at 2hz
-#define ID_ENGINE_GENERAL_STATUS_5    1233  // Contains eng_oil_pressure. Transmitted at 2hz
-
-// TX CAN message IDs
-#define ID_V_BUS            0x780
-
-// Pin assignments
-#define SPI_CS_PIN          17 
-#define MCP_PIN_INT         7   // MCP2515 interrupt pin
-
-#define PIN_UART_RX         0
-#define PIN_UART_TX         1
-#define PIN_SRS             2   // Port D1
-#define PIN_SPEED           3   // Port D0
-#define PIN_CEL             4
-#define PIN_COOLANT         5
-#define PIN_ABS             6
-#define PIN_SEATBELT        8
-#define PIN_CRUISE          9
-#define PIN_OILP            10
-#define PIN_TACH            11    // Port B7
-#define PIN_ALT             12
-#define PIN_LED             13
-
-// Calculate the prescaler and compare value
-#define INIT_LIGHT_ON_CTS     INIT_LIGHT_ON_S*MAIN_INT_FREQ_HZ
-#define COUNT_INTVL_V_BUS     MAIN_INT_FREQ_HZ / FREQ_V_BUS_HZ
-#define TIMER0_COMPARE_VALUE  100       // Initialize fast so it updates quickly
-#define TIMER1_FREQ           (F_CPU / TIMER1_PRESCALER)
-#define TIMER1_COMPARE_VALUE  100       // Initialize fast so it updates quickly
-#define WARN_BLINK_COUNTS     TIMER1_FREQ / 2*WARN_BLINK_HZ
-
-// Define minimum values that can will enable the output
-// Make it larger than the theoretical minimum to keep update rates reasonalbe, since it only updates
-// When the timer interrupts happen
-//#define MIN_RPM               TIMER1_FREQ/(2*(pow(2, 16)-1)*RPM2HZ)
-//#define MIN_MPH               TIMER1_FREQ/(2*(pow(2, 16)-1)*MPH2HZ)
-#define MIN_RPM               200
-#define MIN_MPH               5
 
 // Set CAN tranciever chip select pin
 MCP_CAN CAN(SPI_CS_PIN);    
 
+ // Define all the variables
+  unsigned char len = 0;
+  unsigned char buf[8];  
+  float rpm         = 0;
+  float kph         = 0;
+  float mph         = 0;
+  float t_cool      = 0;
+  float p_oil_kpa   = 0;
+  float p_oil_psi   = 0;
+  bool  cel_on      = 0;
+  uint16_t adc_bus  = 0;
+  union {
+    float volts;
+    uint8_t bytes[4];
+  } v_bus;
+  float gas_gallons   = -1;
+  float gas_perc      = -1;
+  volatile bool flag_mainloop = 0;
+  bool init_cpt     = 0;
+  uint8_t coolPWMval = 0;
+  bool flag_oil_low   = 0;
+  bool flag_cool_hot  = 0;
+  bool flag_v_low     = 0;
 
-// ---- Timer0 (8-bit CTC) config, derived from MAIN_INT_FREQ_HZ ----
-// Timer0 counts 0..OCR0A then resets, dividing F_CPU by
-// prescaler * (OCR0A + 1). OCR0A is 8 bits (max 255), so only
-// F_CPU / (prescaler * N) for N in [1,256], prescaler in {1,8,64,256,1024}
-// are actually reachable.
+  // Counter variables
+  uint16_t loopCount                    = 0;
+  uint16_t count_end_adc                = COUNT_INTVL_V_BUS;
+  volatile uint16_t count_intvl_tach    = TIMER1_COMPARE_VALUE;
+  volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
+  volatile bool warn_blink_flag         = 0;
 
-// Pick the smallest prescaler that keeps the tick count within 8 bits
-#if   (F_CPU / 1UL    / MAIN_INT_FREQ_HZ) <= 256
-  #define TIMER0_PRESCALER 1UL
-#elif (F_CPU / 8UL    / MAIN_INT_FREQ_HZ) <= 256
-  #define TIMER0_PRESCALER 8UL
-#elif (F_CPU / 64UL   / MAIN_INT_FREQ_HZ) <= 256
-  #define TIMER0_PRESCALER 64UL
-#elif (F_CPU / 256UL  / MAIN_INT_FREQ_HZ) <= 256
-  #define TIMER0_PRESCALER 256UL
-#elif (F_CPU / 1024UL / MAIN_INT_FREQ_HZ) <= 256
-  #define TIMER0_PRESCALER 1024UL
-#else
-  #error "MAIN_INT_FREQ_HZ too low - no Timer0 prescaler can reach it"
-#endif
-
-#define TIMER0_TICKS ((F_CPU + (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ) / 2) \
-                        / (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ))
-
-#define TIMER0_COMPARE_VALUE (TIMER0_TICKS - 1)
-
-#if TIMER0_COMPARE_VALUE > 255
-  #error "TIMER0_COMPARE_VALUE out of 8-bit range - check MAIN_INT_FREQ_HZ"
-#endif
-
-
-// Configure timer0 to run at 1kHz
-void timer0_init() {
-
-  // Initialize to zero - Arduino initializes this to something else intially
-  TCCR0A = 0;
-  TCCR0B = 0;
- 
-  // Set Timer 0 to CTC mode (Clear Timer on Compare Match)
-  TCCR0A |= (1 << WGM01);
-
-  // Set the prescaler
-  if (TIMER0_PRESCALER == 1) {
-    TCCR0B |= (1 << CS00);
-  } else if (TIMER0_PRESCALER == 8) {
-    TCCR0B |= (1 << CS01);
-  } else if (TIMER0_PRESCALER == 64) {
-    TCCR0B |= (1 << CS01) | (1 << CS00);
-  } else if (TIMER0_PRESCALER == 256) {
-    TCCR0B |= (1 << CS02);
-  } else if (TIMER0_PRESCALER == 1024) {
-    TCCR0B |= (1 << CS02) | (1 << CS00);
-  } else {
-    // Handle invalid prescaler value
-    // For example, set a default prescaler or return an error
-    TCCR0B |= (1 << CS01) | (1 << CS00); // Defaults to 64
-  }
-
-  // Set the compare value
-  OCR0A = TIMER0_COMPARE_VALUE;
-
-  // Start the count clean
-  TCNT0 = 0;                 // start the count clean too
-
-  // Enable Timer 0 compare match A interrupt
-  TIMSK0 |= (1 << OCIE0A);
+// Interrupt service routines (ISRs)
+ISR(TIMER0_COMPA_vect) {
+  flag_mainloop = 1;    // Set a flag for the main loop to do stuff
 }
 
-void timer1_init() {
-  // Set Timer 1 to normal mode, count up to 0xFFFF
-  TCCR1A = 0;
-  TCCR1B = 0;
-
-  // Set the prescaler
-  if (TIMER1_PRESCALER == 1) {
-    TCCR1B |= (1 << CS10);
-  } else if (TIMER1_PRESCALER == 8) {
-    TCCR1B |= (1 << CS11);
-  } else if (TIMER1_PRESCALER == 64) {
-    TCCR1B |= (1 << CS11) | (1 << CS10);
-  } else if (TIMER1_PRESCALER == 256) {
-    TCCR1B |= (1 << CS12);
-  } else if (TIMER1_PRESCALER == 1024) {
-    TCCR1B |= (1 << CS12) | (1 << CS10);
-  } else {
-    // Handle invalid prescaler value
-    // For example, set a default prescaler or return an error
-    TCCR1B |= (1 << CS11) | (1 << CS10); // Defaults to 64
-  }
-
-  // Set initial compare values
-  OCR1A = TIMER1_COMPARE_VALUE;
-  OCR1B = TIMER1_COMPARE_VALUE;
-  OCR1C = WARN_BLINK_COUNTS;
-
-  // Enable compare match interrupts for A, B, and C
-  TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B) | (1 << OCIE1C);
-
-  // Enable global interrupts
-  sei();
+ISR(TIMER1_COMPA_vect) {
+  // Tach interrupt
+   if(rpm > MIN_RPM){         
+    PORTB ^= (1 << PB7);        // Digital pin 11
+   } else {
+    PORTB &= ~(1 << PB7);        // Digital pin 11
+   }
+  OCR1A += count_intvl_tach;
 }
+
+ISR(TIMER1_COMPB_vect) {
+  // Speedo interrupt
+  if(mph > MIN_MPH){   
+    PORTD ^= (1 << PD0);        // Digital pin 3 
+  } else {
+    PORTD &= ~(1 << PD0);        // Digital pin 3 
+  }
+  OCR1B += count_intvl_speed;
+}
+
+ISR(TIMER1_COMPC_vect) {
+  // Warning light interrupt
+  if(warn_blink_flag){   
+    PORTD ^= (1 << PD1);        // Digital pin 2
+  }
+  OCR1C += WARN_BLINK_COUNTS;
+}
+
+
 
 void setup()
 {
@@ -260,67 +154,6 @@ void setup()
     sei();
 }
 
-  // Define all the variables
-  unsigned char len = 0;
-  unsigned char buf[8];  
-  float rpm         = 0;
-  float kph         = 0;
-  float mph         = 0;
-  float t_cool      = 0;
-  float p_oil_kpa   = 0;
-  float p_oil_psi   = 0;
-  bool  cel_on      = 0;
-  uint16_t adc_bus  = 0;
-  union {
-    float volts;
-    uint8_t bytes[4];
-  } v_bus;
-  volatile bool flag_mainloop = 0;
-  bool init_cpt     = 0;
-  uint8_t coolPWMval = 0;
-  bool flag_oil_low   = 0;
-  bool flag_cool_hot  = 0;
-  bool flag_v_low     = 0;
-
-  // Counter variables
-  uint16_t loopCount                    = 0;
-  uint16_t count_end_adc                = COUNT_INTVL_V_BUS;
-  volatile uint16_t count_intvl_tach    = TIMER1_COMPARE_VALUE;
-  volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
-  volatile bool warn_blink_flag         = 0;
-
-// Interrupt service routines (ISRs)
-ISR(TIMER0_COMPA_vect) {
-  flag_mainloop = 1;    // Set a flag for the main loop to do stuff
-}
-
-ISR(TIMER1_COMPA_vect) {
-  // Tach interrupt
-   if(rpm > MIN_RPM){         
-    PORTB ^= (1 << PB7);        // Digital pin 11
-   } else {
-    PORTB &= ~(1 << PB7);        // Digital pin 11
-   }
-  OCR1A += count_intvl_tach;
-}
-
-ISR(TIMER1_COMPB_vect) {
-  // Speedo interrupt
-  if(mph > MIN_MPH){   
-    PORTD ^= (1 << PD0);        // Digital pin 3 
-  } else {
-    PORTD &= ~(1 << PD0);        // Digital pin 3 
-  }
-  OCR1B += count_intvl_speed;
-}
-
-ISR(TIMER1_COMPC_vect) {
-  // Warning light interrupt
-  if(warn_blink_flag){   
-    PORTD ^= (1 << PD1);        // Digital pin 2
-  }
-  OCR1C += WARN_BLINK_COUNTS;
-}
 
 
 void loop(){
@@ -360,8 +193,13 @@ void loop(){
       digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
 
       count_end_adc += COUNT_INTVL_V_BUS;
-      v_bus.volts = analogRead(A0)* ADC2VBUS;
 
+      // Read bus voltage and gas
+      v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
+      gas_gallons = interp1f(analogRead(ADC_GAS), gasGaugeCounts, gasGaugeGallons, gasNumPts);
+      gas_perc = gas_gallons / GAS_CAPACITY;
+      
+      
       // Transmit it over CAN  
       CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, v_bus.bytes);
 
@@ -386,13 +224,15 @@ void loop(){
         //     Serial.print("\t");
         // }
         // Serial.println();
-        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
-        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
-        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
-        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
-        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
-        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(", ");
-        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.println(flag_v_low);
+//        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
+//        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
+//        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
+//        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
+//        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
+        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(",\t\t");
+        Serial.print("gas = "); Serial.print(gas_gallons); Serial.print(" "); Serial.print(gas_perc);        
+//        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.print(flag_v_low);
+        Serial.println();
       #endif          
     }
 
