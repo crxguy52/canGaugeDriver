@@ -1,3 +1,5 @@
+#include "inttypes.h"
+
 #define LIGHT_ON            HIGH    // Value to turn light on
 #define LIGHT_OFF           LOW     // Value to turn light off
 #define CAN_500KBPS         16
@@ -61,6 +63,6 @@ gallons		ohms	volts	mA		counts
 0			111.04	1.68	15.1	343
 */
 #define GAS_CAPACITY 		12.7
-static const float gasGaugeCounts[] = 	{25,	34,	43,	60,	78,	99,	121,	142,	163,	207,	232,	276,	339,	343};
-static const float gasGaugeGallons[] = 	{13,	12,	11,	10,	9,	8,	7,		6,		5,		4,		3,		2,		1,		0};
-static const uint8_t gasNumPts = 14;
+extern const float gasGaugeCounts[];
+extern const float gasGaugeGallons[];
+extern const uint8_t gasNumPts;

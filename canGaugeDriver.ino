@@ -1,15 +1,17 @@
 #include "src/Longan_CAN_MCP2515/mcp_can.h"
+#include "src/typedefs.h"
 #include "src/utils/utils.h"
-#include "hwdefs.h"
-#include "limits.h"
-#include "timers.h"
+#include "src/hwdefs.h"
+#include "src/limits.h"
+#include "src/timers.h"
+#include "src/can.h"
 #include <SPI.h>
 
 /*
 GaugeDriver
-V. Zaccardo, March 2025
 Program for a Seeed CANBed to recieve CAN data from a GM ECU
-And drive a NB Miata tach, speedo, coolant gauge, and all lights
+and drive a NB Miata tach, speedo, coolant gauge, and lights
+Also, send the appropriate CAN messages to command the AC compressor
 
 Timer0 is used to run the main loop
   - Receives CAN messages
@@ -36,26 +38,19 @@ MCP_CAN CAN(SPI_CS_PIN);
  // Define all the variables
   unsigned char len = 0;
   unsigned char buf[8];  
-  float rpm         = 0;
-  float kph         = 0;
-  float mph         = 0;
-  float t_cool      = 0;
-  float p_oil_kpa   = 0;
-  float p_oil_psi   = 0;
-  bool  cel_on      = 0;
+
+  EngineData engData;
+
+
   uint16_t adc_bus  = 0;
   union {
     float volts;
     uint8_t bytes[4];
   } v_bus;
-  float gas_gallons   = -1;
-  float gas_perc      = -1;
+
   volatile bool flag_mainloop = 0;
   bool init_cpt     = 0;
-  uint8_t coolPWMval = 0;
-  bool flag_oil_low   = 0;
-  bool flag_cool_hot  = 0;
-  bool flag_v_low     = 0;
+
 
   // Counter variables
   uint16_t loopCount                    = 0;
@@ -71,7 +66,7 @@ ISR(TIMER0_COMPA_vect) {
 
 ISR(TIMER1_COMPA_vect) {
   // Tach interrupt
-   if(rpm > MIN_RPM){         
+   if(engData.rpm > MIN_RPM){         
     PORTB ^= (1 << PB7);        // Digital pin 11
    } else {
     PORTB &= ~(1 << PB7);        // Digital pin 11
@@ -81,7 +76,7 @@ ISR(TIMER1_COMPA_vect) {
 
 ISR(TIMER1_COMPB_vect) {
   // Speedo interrupt
-  if(mph > MIN_MPH){   
+  if(engData.mph > MIN_MPH){   
     PORTD ^= (1 << PD0);        // Digital pin 3 
   } else {
     PORTD &= ~(1 << PD0);        // Digital pin 3 
@@ -184,7 +179,7 @@ void loop(){
       unsigned long canId = CAN.getCanId();
 
       // do stuff with the received data
-      handle_received_message(canId, buf);
+      handle_received_message(canId, buf, &engData);
         
 
     // If we haven't received CAN data and it's time to read bus voltage, read and transmit it       
@@ -196,8 +191,8 @@ void loop(){
 
       // Read bus voltage and gas
       v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
-      gas_gallons = interp1f(analogRead(ADC_GAS), gasGaugeCounts, gasGaugeGallons, gasNumPts);
-      gas_perc = gas_gallons / GAS_CAPACITY;
+      engData.gas_gallons = interp1f(analogRead(ADC_GAS), gasGaugeCounts, gasGaugeGallons, gasNumPts);
+      engData.gas_perc = engData.gas_gallons / GAS_CAPACITY;
       
       
       // Transmit it over CAN  
@@ -207,7 +202,7 @@ void loop(){
       if(init_cpt){
         if(v_bus.volts <= V_BUS_LOW){
           digitalWrite(PIN_ALT, LIGHT_ON);
-          if(rpm > 100){flag_v_low = 1;} else {flag_v_low = 0;}
+          if(engData.rpm > 100){engData.flag_v_low = 1;} else {engData.flag_v_low = 0;}
         } else {
           digitalWrite(PIN_ALT, LIGHT_OFF);
         }
@@ -218,26 +213,21 @@ void loop(){
         // Serial.print("Get data from ID: ");
         // Serial.println(canId, HEX);
 
-        // for(int i = 0; i<len; i++)    // print the data
-        // {
-        //     Serial.print(buf[i], HEX);
-        //     Serial.print("\t");
-        // }
         // Serial.println();
 //        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
 //        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
 //        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
 //        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
 //        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
-        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(",\t\t");
-        Serial.print("gas = "); Serial.print(gas_gallons); Serial.print(" "); Serial.print(gas_perc);        
+//        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(",\t\t");
+//        Serial.print("gas = "); Serial.print(gas_gallons); Serial.print(" "); Serial.print(gas_perc);        
 //        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.print(flag_v_low);
         Serial.println();
       #endif          
     }
 
  
-    if( flag_oil_low | flag_cool_hot | flag_v_low ){
+    if( engData.flag_oil_low | engData.flag_cool_hot | engData.flag_v_low ){
       warn_blink_flag = 1;
     } else {
       warn_blink_flag = 0;
@@ -252,118 +242,118 @@ void loop(){
 } // End mainloop
 
 
-/**************************************************************************
-Function definitions
-**************************************************************************/
-
-static inline void handle_received_message(unsigned long canId, unsigned char buf[8]){
- 
-      // Decode the correct message
-      switch(canId){
-        case ID_ENGINE_GENERAL_STATUS_1:
-          // Decode engine RPM
-          // uint16_t rpmInt = buf[1] << 8 | buf[2];
-          rpm = (buf[1] << 8 | buf[2]) * 0.25;
-
-          // Set new interval
-          // counts_switch = t_switch_s * TIMER1FREQ
-          // t_cycle_s = 1/Freq
-          // t_switch_s = t_cycle_s/2
-          // Freq = rpm * RPM2HZ
-          // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
-          if(rpm > MIN_RPM){
-            count_intvl_tach = TIMER1_FREQ/(2*rpm*RPM2HZ);
-          } 
-
-          if(rpm > RPM_SHIFT){
-            digitalWrite(PIN_CRUISE, LIGHT_ON);
-          } else {
-            digitalWrite(PIN_CRUISE, LIGHT_OFF);
-          }
-
-          break;
-
-        case ID_VEHICLE_SPEED_AND_DISTANCE:
-          // Decode vehicle speed
-          kph = ((buf[0] & 0x7F) << 8 | buf[1]) * 0.015625;
-          mph = kph * 0.6213712;
-
-          // Set new interval
-          // counts_switch = t_switch_s * TIMER1FREQ
-          // t_cycle_s = 1/Freq
-          // t_switch_s = t_cycle_s/2
-          // Freq = rpm * RPM2HZ
-          // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
-          if(mph > MIN_MPH){
-            count_intvl_speed = TIMER1_FREQ/(2*mph*MPH2HZ);
-          }             
-          break;
-
-        case ID_ENGINE_GENERAL_STATUS_4:
-          // Decode engine coolant temp, degC
-          t_cool = buf[2] - 40;
-
-          // Constrain the min val to 0 to make the math easier
-          if(t_cool < 0){
-            t_cool = 0;
-          }
-
-          flag_cool_hot = 0;
-
-          // If we're below the low value
-          if(t_cool < COOL_T_LOW){
-            // Lineraly interpolate between 0 and COOL_PWM_LOW
-            coolPWMval = (t_cool / COOL_T_LOW) * (COOL_PWM_LOW) ;
-
-            // If we're above the low value and below the hot value
-          } else if ((t_cool > COOL_T_LOW) && (t_cool < COOL_T_HIGH)){
-            // Linearly interpolate between COOL_LOW and COOL_HIGH
-            coolPWMval = COOL_PWM_LOW + 
-                      (t_cool - COOL_T_LOW) *
-                      (COOL_PWM_HIGH - COOL_PWM_LOW) / (COOL_T_HIGH - COOL_T_LOW) ;
-
-            // Otherwise we're above the hot value
-          } else {
-            coolPWMval = COOL_PWM_HIGH + 
-                      (t_cool - COOL_T_HIGH) *
-                      (COOL_T_HIGHHIGH - COOL_PWM_HIGH) / (COOL_T_HIGHHIGH - COOL_T_HIGH); 
-            flag_cool_hot = 1;
-          }
-
-          // Write PWM value
-          analogWrite(PIN_COOLANT, coolPWMval);
-          break;
-
-        case ID_ENGINE_GENERAL_STATUS_5:
-          // Decode engine oil pressure
-          p_oil_kpa = buf[2] * 4;
-          p_oil_psi = buf[2] * 0.580152;
-          cel_on    = (buf[6] & 0x4) >> 2;
-
-          // Set warning lights based on new data
-          // Oil pressure is excluded from init sequence
-          // Set the threshold based on rpm
-          float thresh = P_OIL_LOW1_PSI;
-          if(rpm > P_OIL_LOW_RPM){
-            thresh = P_OIL_LOW2_PSI;
-          } 
-
-          if(p_oil_psi < thresh){
-            digitalWrite(PIN_OILP, LIGHT_ON);
-            if(rpm > 100){flag_oil_low = 1;}
-          } else {
-            digitalWrite(PIN_OILP, LIGHT_OFF);
-            flag_oil_low = 0;
-          }
-
-          if(init_cpt){
-            if(cel_on){
-              digitalWrite(PIN_CEL, LIGHT_ON);
-            } else {
-              digitalWrite(PIN_CEL, LIGHT_OFF);
-            }
-          }
-          break;
-
-        }   
-}
+///**************************************************************************
+//Function definitions
+//**************************************************************************/
+//
+//static inline void handle_received_message(unsigned long canId, unsigned char buf[8]){
+// 
+//      // Decode the correct message
+//      switch(canId){
+//        case ID_ENGINE_GENERAL_STATUS_1:
+//          // Decode engine RPM
+//          // uint16_t rpmInt = buf[1] << 8 | buf[2];
+//          engData.rpm = (buf[1] << 8 | buf[2]) * 0.25;
+//
+//          // Set new interval
+//          // counts_switch = t_switch_s * TIMER1FREQ
+//          // t_cycle_s = 1/Freq
+//          // t_switch_s = t_cycle_s/2
+//          // Freq = rpm * RPM2HZ
+//          // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
+//          if(engData.rpm > MIN_RPM){
+//            count_intvl_tach = TIMER1_FREQ/(2*engData.rpm*RPM2HZ);
+//          } 
+//
+//          if(engData.rpm > RPM_SHIFT){
+//            digitalWrite(PIN_CRUISE, LIGHT_ON);
+//          } else {
+//            digitalWrite(PIN_CRUISE, LIGHT_OFF);
+//          }
+//
+//          break;
+//
+//        case ID_VEHICLE_SPEED_AND_DISTANCE:
+//          // Decode vehicle speed
+//          engData.kph = ((buf[0] & 0x7F) << 8 | buf[1]) * 0.015625;
+//          engData.mph = engData.kph * 0.6213712;
+//
+//          // Set new interval
+//          // counts_switch = t_switch_s * TIMER1FREQ
+//          // t_cycle_s = 1/Freq
+//          // t_switch_s = t_cycle_s/2
+//          // Freq = rpm * RPM2HZ
+//          // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
+//          if(engData.mph > MIN_MPH){
+//            count_intvl_speed = TIMER1_FREQ/(2*engData.mph*MPH2HZ);
+//          }             
+//          break;
+//
+//        case ID_ENGINE_GENERAL_STATUS_4:
+//          // Decode engine coolant temp, degC
+//          engData.t_cool = buf[2] - 40;
+//
+//          // Constrain the min val to 0 to make the math easier
+//          if(engData.t_cool < 0){
+//            engData.t_cool = 0;
+//          }
+//
+//          engData.flag_cool_hot = 0;
+//
+//          // If we're below the low value
+//          if(engData.t_cool < COOL_T_LOW){
+//            // Lineraly interpolate between 0 and COOL_PWM_LOW
+//            engData.coolPWMval = (engData.t_cool / COOL_T_LOW) * (COOL_PWM_LOW) ;
+//
+//            // If we're above the low value and below the hot value
+//          } else if ((engData.t_cool > COOL_T_LOW) && (engData.t_cool < COOL_T_HIGH)){
+//            // Linearly interpolate between COOL_LOW and COOL_HIGH
+//            engData.coolPWMval = COOL_PWM_LOW + 
+//                      (engData.t_cool - COOL_T_LOW) *
+//                      (COOL_PWM_HIGH - COOL_PWM_LOW) / (COOL_T_HIGH - COOL_T_LOW) ;
+//
+//            // Otherwise we're above the hot value
+//          } else {
+//            engData.coolPWMval = COOL_PWM_HIGH + 
+//                      (engData.t_cool - COOL_T_HIGH) *
+//                      (COOL_T_HIGHHIGH - COOL_PWM_HIGH) / (COOL_T_HIGHHIGH - COOL_T_HIGH); 
+//            engData.flag_cool_hot = 1;
+//          }
+//
+//          // Write PWM value
+//          analogWrite(PIN_COOLANT, engData.coolPWMval);
+//          break;
+//
+//        case ID_ENGINE_GENERAL_STATUS_5:
+//          // Decode engine oil pressure
+//          engData.p_oil_kpa = buf[2] * 4;
+//          engData.p_oil_psi = buf[2] * 0.580152;
+//          engData.cel_on    = (buf[6] & 0x4) >> 2;
+//
+//          // Set warning lights based on new data
+//          // Oil pressure is excluded from init sequence
+//          // Set the threshold based on rpm
+//          float thresh = P_OIL_LOW1_PSI;
+//          if(engData.rpm > P_OIL_LOW_RPM){
+//            thresh = P_OIL_LOW2_PSI;
+//          } 
+//
+//          if(engData.p_oil_psi < thresh){
+//            digitalWrite(PIN_OILP, LIGHT_ON);
+//            if(engData.rpm > 100){engData.flag_oil_low = 1;}
+//          } else {
+//            digitalWrite(PIN_OILP, LIGHT_OFF);
+//            engData.flag_oil_low = 0;
+//          }
+//
+//          if(init_cpt){
+//            if(engData.cel_on){
+//              digitalWrite(PIN_CEL, LIGHT_ON);
+//            } else {
+//              digitalWrite(PIN_CEL, LIGHT_OFF);
+//            }
+//          }
+//          break;
+//
+//        }   
+//}
