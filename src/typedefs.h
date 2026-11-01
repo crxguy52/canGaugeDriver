@@ -14,5 +14,7 @@
     bool flag_cool_hot  = 0;
     bool flag_v_low     = 0; 
     float gas_gallons   = -1;
-    float gas_perc      = -1;       
+    float gas_perc      = -1; 
+    bool CEL 			= 0;
+    bool AC_req			= 0;      
   } EngineData;

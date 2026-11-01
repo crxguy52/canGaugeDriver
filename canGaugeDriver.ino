@@ -5,7 +5,13 @@
 #include "src/limits.h"
 #include "src/timers.h"
 #include "src/can.h"
+#include "src/interrupts.h"
 #include <SPI.h>
+
+#define CPU_LED_MAINLOOP
+#define CPU_LED_TX1
+//#define DEBUG    
+
 
 /*
 GaugeDriver
@@ -18,6 +24,7 @@ Timer0 is used to run the main loop
   - Turns lights on and off based on received values
   - Sets PWM value based on coolant value
   - Sets tachInterval and speedInterval
+  
 Timer1 is used to drive variable frequency outputs
   - TIMER1 COMPA is the tach
     - If rpm > RPM_MIN, interrupt toggles PIN_TACH, sets COMPA += tachInterval
@@ -27,71 +34,29 @@ Timer1 is used to drive variable frequency outputs
       - Else COMPB += tachInterval
   - TIMER1 COMPC is used to blink a warning light in the event a param is out of range
 */
-
-//#define DEBUG     
-
-
+ 
 
 // Set CAN tranciever chip select pin
 MCP_CAN CAN(SPI_CS_PIN);    
 
  // Define all the variables
-  unsigned char len = 0;
-  unsigned char buf[8];  
+unsigned char len = 0;
+unsigned char buf[8];  
+EngineData engData;
+uint16_t adc_bus  = 0;
+union {
+  float volts;
+  uint8_t bytes[4];
+} v_bus;
 
-  EngineData engData;
+volatile bool flag_mainloop = 0;
 
-
-  uint16_t adc_bus  = 0;
-  union {
-    float volts;
-    uint8_t bytes[4];
-  } v_bus;
-
-  volatile bool flag_mainloop = 0;
-  bool init_cpt     = 0;
-
-
-  // Counter variables
-  uint16_t loopCount                    = 0;
-  uint16_t count_end_adc                = COUNT_INTVL_V_BUS;
-  volatile uint16_t count_intvl_tach    = TIMER1_COMPARE_VALUE;
-  volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
-  volatile bool warn_blink_flag         = 0;
-
-// Interrupt service routines (ISRs)
-ISR(TIMER0_COMPA_vect) {
-  flag_mainloop = 1;    // Set a flag for the main loop to do stuff
-}
-
-ISR(TIMER1_COMPA_vect) {
-  // Tach interrupt
-   if(engData.rpm > MIN_RPM){         
-    PORTB ^= (1 << PB7);        // Digital pin 11
-   } else {
-    PORTB &= ~(1 << PB7);        // Digital pin 11
-   }
-  OCR1A += count_intvl_tach;
-}
-
-ISR(TIMER1_COMPB_vect) {
-  // Speedo interrupt
-  if(engData.mph > MIN_MPH){   
-    PORTD ^= (1 << PD0);        // Digital pin 3 
-  } else {
-    PORTD &= ~(1 << PD0);        // Digital pin 3 
-  }
-  OCR1B += count_intvl_speed;
-}
-
-ISR(TIMER1_COMPC_vect) {
-  // Warning light interrupt
-  if(warn_blink_flag){   
-    PORTD ^= (1 << PD1);        // Digital pin 2
-  }
-  OCR1C += WARN_BLINK_COUNTS;
-}
-
+// Counter variables
+uint16_t loopCount                    = 0;
+uint16_t count_end_adc                = COUNT_INTVL_V_BUS;
+volatile uint16_t count_intvl_tach    = TIMER1_COMPARE_VALUE;
+volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
+volatile bool warn_blink_flag         = 0;
 
 
 void setup()
@@ -110,7 +75,7 @@ void setup()
     pinMode(PIN_ALT,      OUTPUT);
     pinMode(PIN_SRS,      OUTPUT);
     pinMode(PIN_SPEED,    OUTPUT);
-    pinMode(PIN_CEL,      OUTPUT);
+    pinMode(PIN_CEL_OUT,  OUTPUT);
     pinMode(PIN_COOLANT,  OUTPUT);
     pinMode(PIN_ABS,      OUTPUT);
     pinMode(PIN_CRUISE,   OUTPUT);
@@ -153,24 +118,14 @@ void setup()
 
 void loop(){
 
-  if(flag_mainloop == 1){
+  if(flag_mainloop == 1){     // Main loop flag is set in TIMER0 interrupt 
 
     flag_mainloop = 0;  
 
-    if(loopCount >= INIT_LIGHT_ON_CTS && !init_cpt){
-      // These lights turn on for INIT_LIGHT_ON_CTS and are then off by default
-      // They may be turned on or off when CAN data is received 
-      digitalWrite(PIN_ALT,      LIGHT_OFF);
-      digitalWrite(PIN_SEATBELT, LIGHT_OFF);
-      digitalWrite(PIN_SRS,      LIGHT_OFF);
-      digitalWrite(PIN_CEL,      LIGHT_OFF);      
-      digitalWrite(PIN_ABS,      LIGHT_OFF);
-      digitalWrite(PIN_CRUISE,   LIGHT_OFF);
-      init_cpt = 1;
-    }
-
-    digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
-    
+    #ifdef CPU_LED_MAINLOOP
+      digitalWrite(PIN_LED, HIGH);
+    #endif
+  
     // Check if there's CAN data available
     if(CAN_MSGAVAIL == CAN.checkReceive()){
       // If there's new data, read it          
@@ -180,33 +135,51 @@ void loop(){
 
       // do stuff with the received data
       handle_received_message(canId, buf, &engData);
+
+    #ifdef CPU_LED_MAINLOOP
+      digitalWrite(PIN_LED, LOW);     
+    #endif
         
 
     // If we haven't received CAN data and it's time to read bus voltage, read and transmit it       
     } else if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
       
-      digitalWrite(PIN_LED, HIGH);   // Set the LED pin high to measure CPU usage
+      #ifdef CPU_LED_TX1
+        digitalWrite(PIN_LED, HIGH);
+      #endif
 
       count_end_adc += COUNT_INTVL_V_BUS;
 
       // Read bus voltage and gas
       v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
+
+      // Read fuel level
       engData.gas_gallons = interp1f(analogRead(ADC_GAS), gasGaugeCounts, gasGaugeGallons, gasNumPts);
       engData.gas_perc = engData.gas_gallons / GAS_CAPACITY;
+
+      // Read the check engine light pin 
+      engData.CEL = digitalRead(PIN_CEL_IN);
+      if(engData.CEL){
+        digitalWrite(PIN_CEL_OUT, LIGHT_ON)    
+      }else{
+        digitalWrite(PIN_CEL_OUT, LIGHT_OFF)
+      }
+
+      // Read AC compressor request
+      engData.AC_REQ = digitalRead(PIN_AC_REQ);
       
       
       // Transmit it over CAN  
       CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, v_bus.bytes);
 
 
-      if(init_cpt){
-        if(v_bus.volts <= V_BUS_LOW){
-          digitalWrite(PIN_ALT, LIGHT_ON);
-          if(engData.rpm > 100){engData.flag_v_low = 1;} else {engData.flag_v_low = 0;}
-        } else {
-          digitalWrite(PIN_ALT, LIGHT_OFF);
-        }
+      if(v_bus.volts <= V_BUS_LOW){
+        digitalWrite(PIN_ALT, LIGHT_ON);
+        if(engData.rpm > 100){engData.flag_v_low = 1;} else {engData.flag_v_low = 0;}
+      } else {
+        digitalWrite(PIN_ALT, LIGHT_OFF);
       }
+
 
     #ifdef DEBUG
         // Serial.println("-----------------------------");
@@ -234,126 +207,11 @@ void loop(){
       digitalWrite(PIN_SRS, LIGHT_OFF);
     }
  
-    digitalWrite(PIN_LED, LOW);     
+    #ifdef CPU_LED_TX1
+      digitalWrite(PIN_LED, LOW);     
+    #endif   
 
     loopCount += 1;   // Increment the loop counter
 
   } // End if mainloop flag
 } // End mainloop
-
-
-///**************************************************************************
-//Function definitions
-//**************************************************************************/
-//
-//static inline void handle_received_message(unsigned long canId, unsigned char buf[8]){
-// 
-//      // Decode the correct message
-//      switch(canId){
-//        case ID_ENGINE_GENERAL_STATUS_1:
-//          // Decode engine RPM
-//          // uint16_t rpmInt = buf[1] << 8 | buf[2];
-//          engData.rpm = (buf[1] << 8 | buf[2]) * 0.25;
-//
-//          // Set new interval
-//          // counts_switch = t_switch_s * TIMER1FREQ
-//          // t_cycle_s = 1/Freq
-//          // t_switch_s = t_cycle_s/2
-//          // Freq = rpm * RPM2HZ
-//          // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
-//          if(engData.rpm > MIN_RPM){
-//            count_intvl_tach = TIMER1_FREQ/(2*engData.rpm*RPM2HZ);
-//          } 
-//
-//          if(engData.rpm > RPM_SHIFT){
-//            digitalWrite(PIN_CRUISE, LIGHT_ON);
-//          } else {
-//            digitalWrite(PIN_CRUISE, LIGHT_OFF);
-//          }
-//
-//          break;
-//
-//        case ID_VEHICLE_SPEED_AND_DISTANCE:
-//          // Decode vehicle speed
-//          engData.kph = ((buf[0] & 0x7F) << 8 | buf[1]) * 0.015625;
-//          engData.mph = engData.kph * 0.6213712;
-//
-//          // Set new interval
-//          // counts_switch = t_switch_s * TIMER1FREQ
-//          // t_cycle_s = 1/Freq
-//          // t_switch_s = t_cycle_s/2
-//          // Freq = rpm * RPM2HZ
-//          // counts_switch = TIMER1FREQ/(2*rpm*RPM2HZ)
-//          if(engData.mph > MIN_MPH){
-//            count_intvl_speed = TIMER1_FREQ/(2*engData.mph*MPH2HZ);
-//          }             
-//          break;
-//
-//        case ID_ENGINE_GENERAL_STATUS_4:
-//          // Decode engine coolant temp, degC
-//          engData.t_cool = buf[2] - 40;
-//
-//          // Constrain the min val to 0 to make the math easier
-//          if(engData.t_cool < 0){
-//            engData.t_cool = 0;
-//          }
-//
-//          engData.flag_cool_hot = 0;
-//
-//          // If we're below the low value
-//          if(engData.t_cool < COOL_T_LOW){
-//            // Lineraly interpolate between 0 and COOL_PWM_LOW
-//            engData.coolPWMval = (engData.t_cool / COOL_T_LOW) * (COOL_PWM_LOW) ;
-//
-//            // If we're above the low value and below the hot value
-//          } else if ((engData.t_cool > COOL_T_LOW) && (engData.t_cool < COOL_T_HIGH)){
-//            // Linearly interpolate between COOL_LOW and COOL_HIGH
-//            engData.coolPWMval = COOL_PWM_LOW + 
-//                      (engData.t_cool - COOL_T_LOW) *
-//                      (COOL_PWM_HIGH - COOL_PWM_LOW) / (COOL_T_HIGH - COOL_T_LOW) ;
-//
-//            // Otherwise we're above the hot value
-//          } else {
-//            engData.coolPWMval = COOL_PWM_HIGH + 
-//                      (engData.t_cool - COOL_T_HIGH) *
-//                      (COOL_T_HIGHHIGH - COOL_PWM_HIGH) / (COOL_T_HIGHHIGH - COOL_T_HIGH); 
-//            engData.flag_cool_hot = 1;
-//          }
-//
-//          // Write PWM value
-//          analogWrite(PIN_COOLANT, engData.coolPWMval);
-//          break;
-//
-//        case ID_ENGINE_GENERAL_STATUS_5:
-//          // Decode engine oil pressure
-//          engData.p_oil_kpa = buf[2] * 4;
-//          engData.p_oil_psi = buf[2] * 0.580152;
-//          engData.cel_on    = (buf[6] & 0x4) >> 2;
-//
-//          // Set warning lights based on new data
-//          // Oil pressure is excluded from init sequence
-//          // Set the threshold based on rpm
-//          float thresh = P_OIL_LOW1_PSI;
-//          if(engData.rpm > P_OIL_LOW_RPM){
-//            thresh = P_OIL_LOW2_PSI;
-//          } 
-//
-//          if(engData.p_oil_psi < thresh){
-//            digitalWrite(PIN_OILP, LIGHT_ON);
-//            if(engData.rpm > 100){engData.flag_oil_low = 1;}
-//          } else {
-//            digitalWrite(PIN_OILP, LIGHT_OFF);
-//            engData.flag_oil_low = 0;
-//          }
-//
-//          if(init_cpt){
-//            if(engData.cel_on){
-//              digitalWrite(PIN_CEL, LIGHT_ON);
-//            } else {
-//              digitalWrite(PIN_CEL, LIGHT_OFF);
-//            }
-//          }
-//          break;
-//
-//        }   
-//}
