@@ -1,3 +1,4 @@
+#pragma once
 #define COOL_T_COLD         0       // Temperature at and below which the coolant gauge is fully off
 #define COOL_PWM_COLD       0       // PWM value for a fully-off (cold) coolant gauge
 #define COOL_T_LOW          80      // Temperature at which coolant gauge should be on the L line

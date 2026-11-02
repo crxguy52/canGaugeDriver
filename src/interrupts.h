@@ -1,3 +1,4 @@
+#pragma once
 #include "Arduino.h"
 #include "typedefs.h"
 #include <avr/interrupt.h>

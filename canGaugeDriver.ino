@@ -6,6 +6,7 @@
 #include "src/timers.h"
 #include "src/can.h"
 #include "src/interrupts.h"
+#include "src/outputs.h"
 #include <SPI.h>
 
 #define CPU_LED_MAINLOOP
@@ -19,30 +20,29 @@ Program for a Seeed CANBed to recieve CAN data from a GM ECU
 and drive a NB Miata tach, speedo, coolant gauge, and lights
 Also, send the appropriate CAN messages to command the AC compressor
 
-Timer0 is used to run the main loop:
-  - Checks for CAN messages at MAIN_INT_FREQ_HZ
-    - Receives CAN messages
-    - Turns lights on and off based on received values
-    - Sets PWM value based on coolant value
-    - Sets tachInterval and speedInterval
-    
-  - If no CAN messages available and at FREQ_V_BUS_HZ
-    - Reads inputs, transmits values over CAN
+Timer0 sets a flag at MAIN_INT_FREQ_HZ; each tick the main loop:
+  - Reads one CAN message (if available) and decodes it into engData (can.cpp)
 
-  - Offset by FREQ_V_BUS_HZ/2
-    - Transmits BCM message for compressor
-    
-  - At 1HZ
-    - Transmits BCM message
-  
+  - At FREQ_V_BUS_HZ
+    - Reads inputs (bus voltage, fuel level, CEL pin, AC request), transmits bus voltage over CAN
+
+  - At FREQ_V_BUS_HZ, offset by half an interval
+    - Transmits Platform General Status (AC compressor request)
+
+  - At FREQ_1HZ
+    - Transmits Platform Configuration Data (AC compressor type)
+
+  - Sets all outputs from engData (outputs.cpp): lights, coolant PWM,
+    tach/speedo intervals and enables, warning flags
+
 Timer1 is used to drive variable frequency outputs
   - TIMER1 COMPA is the tach
-    - If rpm > RPM_MIN, interrupt toggles PIN_TACH, sets COMPA += tachInterval
-    - Else COMBA += tachInterval
-  - TIMER1 COMPB is the speedo  -> Interrupt toggles PIN_SPEED, sets COMPB += speedInterval
-      - If mph > MPH_MIN, interrupt toggles PIN_TACH, sets COMPB += tachInterval
-      - Else COMPB += tachInterval
-  - TIMER1 COMPC is used to blink a warning light in the event a param is out of range
+    - If tach_enable, interrupt toggles PIN_TACH, else holds it low
+    - Always COMPA += count_intvl_tach
+  - TIMER1 COMPB is the speedo
+    - If speed_enable, interrupt toggles PIN_SPEED, else holds it low
+    - Always COMPB += count_intvl_speed
+  - TIMER1 COMPC blinks PIN_SRS while warn_blink_flag is set (any warning flag active)
 */
  
 
@@ -53,11 +53,6 @@ MCP_CAN CAN(SPI_CS_PIN);
 unsigned char len = 0;
 unsigned char buf[8];  
 EngineData engData;
-uint16_t adc_bus  = 0;
-union {
-  float volts;
-  uint8_t bytes[4];
-} v_bus;
 
 volatile bool flag_mainloop = 0;
 
@@ -76,7 +71,6 @@ volatile bool warn_blink_flag         = 0;
 void setup()
 {
     Serial.begin(115200);       // USB serial port
-//    Serial1.begin(115200);  /// Pins 0 and 1
     
     while (CAN_OK != CAN.begin(CAN_500KBPS))    // init can bus : baudrate = 500k
     {
@@ -140,18 +134,16 @@ void loop(){
   
     // Check if there's CAN data available
     if(CAN_MSGAVAIL == CAN.checkReceive()){
-      // If there's new data, read it          
-      // read data,  len: data length, buf: data buf
+      // If there's new data, read it. len: data length, buf: data buf
       CAN.readMsgBuf(&len, buf);                    
       unsigned long canId = CAN.getCanId();
 
-      // do stuff with the received data
+      // update engData based on the message
       handle_received_message(canId, buf, &engData);
 
     #ifdef CPU_LED_MAINLOOP
       digitalWrite(PIN_LED, LOW);     
-    #endif
-             
+    #endif         
     }
 
     // If it's time to read bus voltage, read and transmit it 
@@ -162,7 +154,7 @@ void loop(){
       #endif
 
       // Read bus voltage and gas
-      v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
+      engData.v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
 
       // Read fuel level
       engData.gas_gallons = interp1f(analogRead(ADC_GAS), gasGaugeCounts, gasGaugeGallons, gasNumPts);
@@ -170,43 +162,27 @@ void loop(){
 
       // Read the check engine light pin 
       engData.CEL = digitalRead(PIN_CEL_IN);
-      if(engData.CEL){
-        digitalWrite(PIN_CEL_OUT, LIGHT_ON);    
-      }else{
-        digitalWrite(PIN_CEL_OUT, LIGHT_OFF);
-      }
 
       // Read AC compressor request
       engData.AC_req = digitalRead(PIN_AC_REQ);
-      
-      
+            
       // Transmit it over CAN  
-      CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, v_bus.bytes);
-
-
-      if(v_bus.volts <= V_BUS_LOW){
-        digitalWrite(PIN_ALT, LIGHT_ON);
-      } else {
-        digitalWrite(PIN_ALT, LIGHT_OFF);
-      }
-      // Only blink while running, so low voltage with the engine off doesn't latch the warning
-      engData.flag_v_low = (v_bus.volts <= V_BUS_LOW) && (engData.rpm > RPM_ENGINE_RUNNING);
+      CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, engData.v_bus.bytes);
 
 
     #ifdef DEBUG
-        // Serial.println("-----------------------------");
-        // Serial.print("Get data from ID: ");
-        // Serial.println(canId, HEX);
-
-        // Serial.println();
-//        Serial.print("RPM = "); Serial.print(engData.rpm); Serial.print(", ");
-//        Serial.print("mph = "); Serial.print(engData.mph); Serial.print(", ");
-//        Serial.print("t_cool = "); Serial.print(engData.t_cool); Serial.print(", ");
-//        Serial.print("p_oil = "); Serial.print(engData.p_oil_psi); Serial.print(", ");
-//        Serial.print("cel_on = "); Serial.print(engData.cel_on); Serial.print(", ");
-//        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(",\t\t");
-//        Serial.print("gas = "); Serial.print(engData.gas_gallons); Serial.print(" "); Serial.print(gas_perc);        
-//        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.print(flag_v_low);
+        Serial.print("RPM = ");    Serial.print(engData.rpm);         Serial.print(", ");
+        Serial.print("mph = ");    Serial.print(engData.mph);         Serial.print(", ");
+        Serial.print("t_cool = "); Serial.print(engData.t_cool);      Serial.print(", ");
+        Serial.print("p_oil = ");  Serial.print(engData.p_oil_psi);   Serial.print(", ");
+        Serial.print("CEL = ");    Serial.print(engData.CEL);         Serial.print(", ");
+        Serial.print("AC_req = "); Serial.print(engData.AC_req);      Serial.print(", ");
+        Serial.print("v_bus = ");  Serial.print(engData.v_bus.volts); Serial.print(", ");
+        Serial.print("gas = ");    Serial.print(engData.gas_gallons); Serial.print(" "); Serial.print(engData.gas_perc); Serial.print(", ");
+        Serial.print("Flags for oil, cool, voltage: ");
+        Serial.print(engData.flag_oil_low);  Serial.print(",");
+        Serial.print(engData.flag_cool_hot); Serial.print(",");
+        Serial.print(engData.flag_v_low);
         Serial.println();
       #endif          
     }
@@ -219,16 +195,11 @@ void loop(){
     if (is_due(loopCount, &count_end_platform_cfg_data, COUNT_INTVL_1HZ)) {
     }
 
- 
-    if( engData.flag_oil_low | engData.flag_cool_hot | engData.flag_v_low ){
-      warn_blink_flag = 1;
-    } else {
-      warn_blink_flag = 0;
-      digitalWrite(PIN_SRS, LIGHT_OFF);
-    }
- 
+    // Set the outputs based on the data and measurements we've received
+    set_outputs(&engData);
+
     #ifdef CPU_LED_TX1
-      digitalWrite(PIN_LED, LOW);     
+        digitalWrite(PIN_LED, LOW);     
     #endif   
 
     loopCount += 1;   // Increment the loop counter
