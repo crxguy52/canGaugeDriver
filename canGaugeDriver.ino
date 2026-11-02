@@ -19,11 +19,21 @@ Program for a Seeed CANBed to recieve CAN data from a GM ECU
 and drive a NB Miata tach, speedo, coolant gauge, and lights
 Also, send the appropriate CAN messages to command the AC compressor
 
-Timer0 is used to run the main loop
-  - Receives CAN messages
-  - Turns lights on and off based on received values
-  - Sets PWM value based on coolant value
-  - Sets tachInterval and speedInterval
+Timer0 is used to run the main loop:
+  - Checks for CAN messages at MAIN_INT_FREQ_HZ
+    - Receives CAN messages
+    - Turns lights on and off based on received values
+    - Sets PWM value based on coolant value
+    - Sets tachInterval and speedInterval
+    
+  - If no CAN messages available and at FREQ_V_BUS_HZ
+    - Reads inputs, transmits values over CAN
+
+  - Offset by FREQ_V_BUS_HZ/2
+    - Transmits BCM message for compressor
+    
+  - At 1HZ
+    - Transmits BCM message
   
 Timer1 is used to drive variable frequency outputs
   - TIMER1 COMPA is the tach
@@ -53,7 +63,9 @@ volatile bool flag_mainloop = 0;
 
 // Counter variables
 uint16_t loopCount                    = 0;
-uint16_t count_end_adc                = COUNT_INTVL_V_BUS;
+uint16_t count_end_adc                = COUNT_INTVL_V_BUS;    // This is 10Hz
+uint16_t count_end_patform_gen_stat   = COUNT_INTVL_V_BUS/2;  // Same 10Hz, just offset by half an interval
+uint16_t count_end_platform_cfg_data  = COUNT_INTVL_1HZ - 1;  // Offset this interval by 1 so all the events don't happen at once
 volatile uint16_t count_intvl_tach    = TIMER1_COMPARE_VALUE;
 volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
 volatile bool warn_blink_flag         = 0;
@@ -139,10 +151,11 @@ void loop(){
     #ifdef CPU_LED_MAINLOOP
       digitalWrite(PIN_LED, LOW);     
     #endif
-        
+             
+    }
 
-    // If we haven't received CAN data and it's time to read bus voltage, read and transmit it       
-    } else if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
+    // If it's time to read bus voltage, read and transmit it 
+    if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
       
       #ifdef CPU_LED_TX1
         digitalWrite(PIN_LED, HIGH);
@@ -160,13 +173,13 @@ void loop(){
       // Read the check engine light pin 
       engData.CEL = digitalRead(PIN_CEL_IN);
       if(engData.CEL){
-        digitalWrite(PIN_CEL_OUT, LIGHT_ON)    
+        digitalWrite(PIN_CEL_OUT, LIGHT_ON);    
       }else{
-        digitalWrite(PIN_CEL_OUT, LIGHT_OFF)
+        digitalWrite(PIN_CEL_OUT, LIGHT_OFF);
       }
 
       // Read AC compressor request
-      engData.AC_REQ = digitalRead(PIN_AC_REQ);
+      engData.AC_req = digitalRead(PIN_AC_REQ);
       
       
       // Transmit it over CAN  
@@ -198,6 +211,12 @@ void loop(){
         Serial.println();
       #endif          
     }
+
+    // If it's time to read bus voltage, read and transmit it 
+    if ( (loopCount - count_end_patform_gen_stat) >= 0 && (loopCount - count_end_patform_gen_stat) < 2*COUNT_INTVL_V_BUS) {}
+
+    // If it's time to read bus voltage, read and transmit it 
+    if ( (loopCount - count_end_platform_cfg_data) >= 0 && (loopCount - count_end_platform_cfg_data) < 2*COUNT_INTVL_1HZ) {}        
 
  
     if( engData.flag_oil_low | engData.flag_cool_hot | engData.flag_v_low ){

@@ -3,6 +3,7 @@
 // Loop timing, Hz
 #define MAIN_INT_FREQ_HZ    250    // Timer0: runs the main loop at this frequency. Prescaler and compare value are calculated below.
 #define FREQ_V_BUS_HZ       10     // Frequency to sample and transmit bus voltage
+#define FREQ_1HZ 			1 	   // How often to send 1Hz BCM (AC) messages
 #define WARN_BLINK_HZ       4      // When there's a warning, blink a light this fast
 #define INIT_LIGHT_ON_S     1      // Time in seconds to keep all lights on before turning off
 
@@ -12,6 +13,7 @@
 // Calculate the prescaler and compare value
 #define INIT_LIGHT_ON_CTS     INIT_LIGHT_ON_S*MAIN_INT_FREQ_HZ
 #define COUNT_INTVL_V_BUS     MAIN_INT_FREQ_HZ / FREQ_V_BUS_HZ
+#define COUNT_INTVL_1HZ       MAIN_INT_FREQ_HZ / FREQ_1HZ
 #define TIMER0_COMPARE_VALUE  100       // Initialize fast so it updates quickly
 #define TIMER1_FREQ           (F_CPU / TIMER1_PRESCALER)
 #define TIMER1_COMPARE_VALUE  100       // Initialize fast so it updates quickly
