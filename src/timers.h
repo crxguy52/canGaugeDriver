@@ -3,21 +3,22 @@
 // Loop timing, Hz
 #define MAIN_INT_FREQ_HZ    250    // Timer0: runs the main loop at this frequency. Prescaler and compare value are calculated below.
 #define FREQ_V_BUS_HZ       10     // Frequency to sample and transmit bus voltage
-#define FREQ_1HZ 			1 	   // How often to send 1Hz BCM (AC) messages
+#define FREQ_1HZ 			1 	   // How often to send the slow BCM (AC) messages
 #define WARN_BLINK_HZ       4      // When there's a warning, blink a light this fast
-#define INIT_LIGHT_ON_S     1      // Time in seconds to keep all lights on before turning off
 
 #define TIMER1_PRESCALER    64      // Timer1 is a 16-bit counter
 
 
 // Calculate the prescaler and compare value
-#define INIT_LIGHT_ON_CTS     INIT_LIGHT_ON_S*MAIN_INT_FREQ_HZ
-#define COUNT_INTVL_V_BUS     MAIN_INT_FREQ_HZ / FREQ_V_BUS_HZ
-#define COUNT_INTVL_1HZ       MAIN_INT_FREQ_HZ / FREQ_1HZ
-#define TIMER0_COMPARE_VALUE  100       // Initialize fast so it updates quickly
+#define COUNT_INTVL_V_BUS     (MAIN_INT_FREQ_HZ / FREQ_V_BUS_HZ)
+#define COUNT_INTVL_1HZ       (MAIN_INT_FREQ_HZ / FREQ_1HZ)
 #define TIMER1_FREQ           (F_CPU / TIMER1_PRESCALER)
 #define TIMER1_COMPARE_VALUE  100       // Initialize fast so it updates quickly
-#define WARN_BLINK_COUNTS     TIMER1_FREQ / 2*WARN_BLINK_HZ
+#define WARN_BLINK_COUNTS     (TIMER1_FREQ / (2*WARN_BLINK_HZ))
+
+#if WARN_BLINK_COUNTS > 0xFFFF
+  #error "WARN_BLINK_COUNTS does not fit in 16-bit OCR1C - raise WARN_BLINK_HZ or lower TIMER1_FREQ"
+#endif
 
 
 // ---- Timer0 (8-bit CTC) config, derived from MAIN_INT_FREQ_HZ ----
@@ -41,17 +42,16 @@
   #error "MAIN_INT_FREQ_HZ too low - no Timer0 prescaler can reach it"
 #endif
 
-#define TIMER0_TICKS ((F_CPU + (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ) / 2) \
-                        / (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ))
+#define TIMER0_COMPARE_VALUE ((F_CPU + (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ) / 2) \
+                        / (TIMER0_PRESCALER * MAIN_INT_FREQ_HZ)) - 1
 
-#define TIMER0_COMPARE_VALUE (TIMER0_TICKS - 1)
 
 #if TIMER0_COMPARE_VALUE > 255
   #error "TIMER0_COMPARE_VALUE out of 8-bit range - check MAIN_INT_FREQ_HZ"
 #endif
 
 
-// Configure timer0 to run at 1kHz
+// Configure timer0 to run at MAIN_INT_FREQ_HZ
 void timer0_init(void);
 
 void timer1_init(void);

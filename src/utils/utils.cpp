@@ -19,3 +19,12 @@ float interp1f(float x, const float* xValues, const float* yValues, uint8_t numP
 }
 
 
+bool is_due(uint16_t loopCount, uint16_t *count_end, uint16_t interval) {
+  // True once loopCount reaches *count_end, then schedules the next event one
+  // interval later. The unsigned subtraction handles loopCount rollover.
+  if ((uint16_t)(loopCount - *count_end) < interval) {
+    *count_end += interval;
+    return true;
+  }
+  return false;
+}

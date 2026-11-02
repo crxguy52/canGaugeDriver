@@ -1,7 +1,7 @@
 #include "timers.h"
 
 
-// Configure timer0 to run at 1kHz
+// Configure timer0 to run at MAIN_INT_FREQ_HZ
 void timer0_init() {
 
   // Initialize to zero - Arduino initializes this to something else intially
@@ -68,7 +68,4 @@ void timer1_init() {
 
   // Enable compare match interrupts for A, B, and C
   TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B) | (1 << OCIE1C);
-
-  // Enable global interrupts
-  sei();
 }

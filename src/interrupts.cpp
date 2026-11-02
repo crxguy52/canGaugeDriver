@@ -7,28 +7,28 @@ ISR(TIMER0_COMPA_vect) {
 
 ISR(TIMER1_COMPA_vect) {
   // Tach interrupt
-   if(engData.rpm > MIN_RPM){         
-    PORTB ^= (1 << PB7);        // Digital pin 11
-   } else {
-    PORTB &= ~(1 << PB7);        // Digital pin 11
-   }
+  if(tach_enable){
+    digitalWrite(PIN_TACH, !digitalRead(PIN_TACH));
+  } else {
+    digitalWrite(PIN_TACH, LOW);
+  }
   OCR1A += count_intvl_tach;
 }
 
 ISR(TIMER1_COMPB_vect) {
   // Speedo interrupt
-  if(engData.mph > MIN_MPH){   
-    PORTD ^= (1 << PD0);        // Digital pin 3 
+  if(speed_enable){
+    digitalWrite(PIN_SPEED, !digitalRead(PIN_SPEED));
   } else {
-    PORTD &= ~(1 << PD0);       // Digital pin 3 
+    digitalWrite(PIN_SPEED, LOW);
   }
   OCR1B += count_intvl_speed;
 }
 
 ISR(TIMER1_COMPC_vect) {
   // Warning light interrupt
-  if(warn_blink_flag){   
-    PORTD ^= (1 << PD1);        // Digital pin 2
+  if(warn_blink_flag){
+    digitalWrite(PIN_SRS, !digitalRead(PIN_SRS));
   }
   OCR1C += WARN_BLINK_COUNTS;
 }

@@ -2,10 +2,6 @@
 
 #define LIGHT_ON            HIGH    // Value to turn light on
 #define LIGHT_OFF           LOW     // Value to turn light off
-#define CAN_500KBPS         16
-#define CAN_1000KBPS        18
-
-#define F_CPU               16000000
 
 // Scaling Values
 #define ADC2VBUS            0.01996 // Convert ADC reading to bus voltage
@@ -27,15 +23,15 @@
 
 #define PIN_AC_REQ          0
 #define PIN_CEL_IN          1
-#define PIN_SRS             2   // Port D1
-#define PIN_SPEED           3   // Port D0
+#define PIN_SRS             2
+#define PIN_SPEED           3
 #define PIN_CEL_OUT         4
 #define PIN_COOLANT         5
 #define PIN_ABS             6
 #define PIN_SEATBELT        8
 #define PIN_CRUISE          9
 #define PIN_OILP            10
-#define PIN_TACH            11    // Port B7
+#define PIN_TACH            11
 #define PIN_ALT             12
 #define PIN_LED             13
 

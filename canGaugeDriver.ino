@@ -63,11 +63,13 @@ volatile bool flag_mainloop = 0;
 
 // Counter variables
 uint16_t loopCount                    = 0;
-uint16_t count_end_adc                = COUNT_INTVL_V_BUS;    // This is 10Hz
-uint16_t count_end_patform_gen_stat   = COUNT_INTVL_V_BUS/2;  // Same 10Hz, just offset by half an interval
+uint16_t count_end_adc                = COUNT_INTVL_V_BUS;    // Runs at FREQ_V_BUS_HZ
+uint16_t count_end_patform_gen_stat   = COUNT_INTVL_V_BUS/2;  // Same rate, just offset by half an interval
 uint16_t count_end_platform_cfg_data  = COUNT_INTVL_1HZ - 1;  // Offset this interval by 1 so all the events don't happen at once
 volatile uint16_t count_intvl_tach    = TIMER1_COMPARE_VALUE;
 volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
+volatile bool tach_enable             = 0;    // Set in main loop, read by the tach ISR
+volatile bool speed_enable            = 0;    // Set in main loop, read by the speedo ISR
 volatile bool warn_blink_flag         = 0;
 
 
@@ -101,22 +103,20 @@ void setup()
     // 1 mask (RXM1) and 4 filters (RXF2-5) for RXB1
     // This libarary enables rolling messages from RXB0 to RXB1 by default (RXB0CTRL:BUKT = 1)
 
-    CAN.init_Mask(0, 0, ID_ENGINE_GENERAL_STATUS_1);        // Engine RPM
-    CAN.init_Mask(1, 0, 
-                        ID_VEHICLE_SPEED_AND_DISTANCE |     // The other messages
-                        ID_ENGINE_GENERAL_STATUS_4 | 
-                        ID_ENGINE_GENERAL_STATUS_5);
+    CAN.init_Mask(0, 0, 0x7FF);        // All bits must match
+    CAN.init_Mask(1, 0, 0x7FF);        // All bits must match
 
-    // Filters for RXB0 - there are two but we only need one
+    // Filters for RXB0 (RXF0-1)
     CAN.init_Filt(0, 0, ID_ENGINE_GENERAL_STATUS_1);
+    CAN.init_Filt(1, 0, ID_VEHICLE_SPEED_AND_DISTANCE);
 
-    // Filters for RXB1 - we need three
-    CAN.init_Filt(2, 0, ID_VEHICLE_SPEED_AND_DISTANCE);
-    CAN.init_Filt(3, 0, ID_ENGINE_GENERAL_STATUS_4);
-    CAN.init_Filt(4, 0, ID_ENGINE_GENERAL_STATUS_5);
-    CAN.init_Filt(5, 0, 0x0);   // Don't accept anything
+    // Filters for RXB1 (RXF2-5)
+    CAN.init_Filt(2, 0, ID_ENGINE_GENERAL_STATUS_4);
+    CAN.init_Filt(3, 0, ID_ENGINE_GENERAL_STATUS_5);
+    CAN.init_Filt(4, 0, ID_ENGINE_GENERAL_STATUS_5);   // Duplicate just to blank out this filter
+    CAN.init_Filt(5, 0, ID_ENGINE_GENERAL_STATUS_5);   // Duplicate just to blank out this filter
 
-    // Set up the timer0 interrupt to run at 1kHz
+    // Set up the timer0 interrupt to run at MAIN_INT_FREQ_HZ
     timer0_init();
 
     // Congifure timer1
@@ -155,13 +155,11 @@ void loop(){
     }
 
     // If it's time to read bus voltage, read and transmit it 
-    if ( (loopCount - count_end_adc) >= 0 && (loopCount - count_end_adc) < 2*COUNT_INTVL_V_BUS) {
-      
+    if (is_due(loopCount, &count_end_adc, COUNT_INTVL_V_BUS)) {
+
       #ifdef CPU_LED_TX1
         digitalWrite(PIN_LED, HIGH);
       #endif
-
-      count_end_adc += COUNT_INTVL_V_BUS;
 
       // Read bus voltage and gas
       v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
@@ -188,10 +186,11 @@ void loop(){
 
       if(v_bus.volts <= V_BUS_LOW){
         digitalWrite(PIN_ALT, LIGHT_ON);
-        if(engData.rpm > 100){engData.flag_v_low = 1;} else {engData.flag_v_low = 0;}
       } else {
         digitalWrite(PIN_ALT, LIGHT_OFF);
       }
+      // Only blink while running, so low voltage with the engine off doesn't latch the warning
+      engData.flag_v_low = (v_bus.volts <= V_BUS_LOW) && (engData.rpm > RPM_ENGINE_RUNNING);
 
 
     #ifdef DEBUG
@@ -200,23 +199,25 @@ void loop(){
         // Serial.println(canId, HEX);
 
         // Serial.println();
-//        Serial.print("RPM = "); Serial.print(rpm); Serial.print(", ");
-//        Serial.print("mph = "); Serial.print(mph); Serial.print(", ");
-//        Serial.print("t_cool = "); Serial.print(t_cool); Serial.print(", ");
-//        Serial.print("p_oil = "); Serial.print(p_oil_psi); Serial.print(", ");
-//        Serial.print("cel_on = "); Serial.print(cel_on); Serial.print(", ");
+//        Serial.print("RPM = "); Serial.print(engData.rpm); Serial.print(", ");
+//        Serial.print("mph = "); Serial.print(engData.mph); Serial.print(", ");
+//        Serial.print("t_cool = "); Serial.print(engData.t_cool); Serial.print(", ");
+//        Serial.print("p_oil = "); Serial.print(engData.p_oil_psi); Serial.print(", ");
+//        Serial.print("cel_on = "); Serial.print(engData.cel_on); Serial.print(", ");
 //        Serial.print("v_bus = "); Serial.print(v_bus.volts); Serial.print(",\t\t");
-//        Serial.print("gas = "); Serial.print(gas_gallons); Serial.print(" "); Serial.print(gas_perc);        
+//        Serial.print("gas = "); Serial.print(engData.gas_gallons); Serial.print(" "); Serial.print(gas_perc);        
 //        Serial.print("Flags for oil, cool, voltage: ");Serial.print(flag_oil_low); Serial.print(",");Serial.print(flag_cool_hot);Serial.print(",");Serial.print(flag_v_low);
         Serial.println();
       #endif          
     }
 
-    // If it's time to read bus voltage, read and transmit it 
-    if ( (loopCount - count_end_patform_gen_stat) >= 0 && (loopCount - count_end_patform_gen_stat) < 2*COUNT_INTVL_V_BUS) {}
+    // If it's time, transmit Platform General Status (AC compressor request)
+    if (is_due(loopCount, &count_end_patform_gen_stat, COUNT_INTVL_V_BUS)) {
+    }
 
-    // If it's time to read bus voltage, read and transmit it 
-    if ( (loopCount - count_end_platform_cfg_data) >= 0 && (loopCount - count_end_platform_cfg_data) < 2*COUNT_INTVL_1HZ) {}        
+    // If it's time, transmit Platform Configuration Data (AC compressor type)
+    if (is_due(loopCount, &count_end_platform_cfg_data, COUNT_INTVL_1HZ)) {
+    }
 
  
     if( engData.flag_oil_low | engData.flag_cool_hot | engData.flag_v_low ){
