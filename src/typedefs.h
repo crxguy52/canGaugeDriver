@@ -16,9 +16,6 @@
     float gas_gallons   = -1;
     float gas_perc      = -1; 
     bool CEL 			= 0;
-    bool AC_req			= 0;    
-    union {
-    float volts         = 0;
-    uint8_t bytes[4];
-    } v_bus;
+    bool AC_req			= 0;
+    float v_bus         = 0;
   } EngineData;

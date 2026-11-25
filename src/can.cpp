@@ -53,3 +53,28 @@ void handle_received_message(
 }
 
 
+
+
+static uint8_t scale_to_u8(float value, float scale){
+    // Convert a physical value to a rounded uint8 count, saturating at 0 and 255
+    float counts = value / scale + 0.5;
+    if (counts <= 0)   return 0;
+    if (counts >= UINT8_MAX) return UINT8_MAX;
+    return (uint8_t)counts;
+}
+
+void send_gaugedriver_status(MCP_CAN &can, const EngineData *engData){
+    // Pack and transmit gaugedriver_status. Layout must match dbc/gaugeDriver.dbc
+    //   byte 0: v_bus     (GD_SCALE_V_BUS)
+    //   byte 1: fuel_gal  (GD_SCALE_FUEL_GAL)
+    //   byte 2: fuel_pct  (GD_SCALE_FUEL_PCT)
+    //   byte 3: bit GD_BIT_AC_REQ = AC_req, bit GD_BIT_CEL = CEL
+    unsigned char txBuf[DLC_GAUGEDRIVER];
+
+    txBuf[0] = scale_to_u8(engData->v_bus,       GD_SCALE_V_BUS);
+    txBuf[1] = scale_to_u8(engData->gas_gallons, GD_SCALE_FUEL_GAL);
+    txBuf[2] = scale_to_u8(engData->gas_perc,    GD_SCALE_FUEL_PCT);
+    txBuf[3] = (engData->AC_req << GD_BIT_AC_REQ) | (engData->CEL << GD_BIT_CEL);
+
+    can.sendMsgBuf(ID_GAUGEDRIVER, 0, 0, DLC_GAUGEDRIVER, txBuf);
+}

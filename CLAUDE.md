@@ -40,7 +40,8 @@ loop(): on flag_mainloop
   ├─ CAN.checkReceive → handle_received_message()  (src/can.cpp)
   │     decode into global EngineData; set lights, coolant PWM directly
   ├─ every COUNT_INTVL_V_BUS ticks: read ADCs (vbus, fuel), CEL in, AC req;
-  │     TX vbus on ID_V_BUS (0x780); alternator light
+  │     send_gaugedriver_status() on ID_GAUGEDRIVER (0x780, layout in
+  │     dbc/gaugeDriver.dbc, copied into pyCANdash's gmlan_v1.10_custom.dbc)
   ├─ two more scheduled slots (Platform Gen Status / Cfg Data): empty stubs for AC
   └─ warn_blink_flag = any(flag_oil_low, flag_cool_hot, flag_v_low)
 

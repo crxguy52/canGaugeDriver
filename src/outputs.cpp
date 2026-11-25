@@ -71,13 +71,13 @@ void set_outputs(EngineData *engData){
         }
 
     // Alternator light
-    if(engData->v_bus.volts <= V_BUS_LOW){
+    if(engData->v_bus <= V_BUS_LOW){
         digitalWrite(PIN_ALT, LIGHT_ON);
     } else {
         digitalWrite(PIN_ALT, LIGHT_OFF);
     }
     // Only blink while running, so low voltage with the engine off doesn't latch the warning
-    engData->flag_v_low = (engData->v_bus.volts <= V_BUS_LOW) && (engData->rpm > RPM_ENGINE_RUNNING);
+    engData->flag_v_low = (engData->v_bus <= V_BUS_LOW) && (engData->rpm > RPM_ENGINE_RUNNING);
 
     // Flash idiot light if any of these are true
     if( engData->flag_oil_low | engData->flag_cool_hot | engData->flag_v_low ){

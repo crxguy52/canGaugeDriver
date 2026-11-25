@@ -24,7 +24,7 @@ Timer0 sets a flag at MAIN_INT_FREQ_HZ; each tick the main loop:
   - Reads one CAN message (if available) and decodes it into engData (can.cpp)
 
   - At FREQ_V_BUS_HZ
-    - Reads inputs (bus voltage, fuel level, CEL pin, AC request), transmits bus voltage over CAN
+    - Reads inputs (bus voltage, fuel level, CEL pin, AC request), transmits them in gaugedriver_status over CAN
 
   - At FREQ_V_BUS_HZ, offset by half an interval
     - Transmits Platform General Status (AC compressor request)
@@ -154,20 +154,20 @@ void loop(){
       #endif
 
       // Read bus voltage and gas
-      engData.v_bus.volts = analogRead(ADC_VBUS)* ADC2VBUS;
+      engData.v_bus = analogRead(ADC_VBUS)* ADC2VBUS;
 
-      // Read fuel level
+      // Read fuel level (interp1f clamps to the table ends)
       engData.gas_gallons = interp1f(analogRead(ADC_GAS), gasGaugeCounts, gasGaugeGallons, gasNumPts);
-      engData.gas_perc = engData.gas_gallons / GAS_CAPACITY;
+      engData.gas_perc = engData.gas_gallons / GAS_CAPACITY * 100;
 
-      // Read the check engine light pin 
-      engData.CEL = digitalRead(PIN_CEL_IN);
+      // Read the check engine light pin, true = lamp on
+      engData.CEL = (digitalRead(PIN_CEL_IN) == CEL_IN_ACTIVE);
 
-      // Read AC compressor request
-      engData.AC_req = digitalRead(PIN_AC_REQ);
-            
-      // Transmit it over CAN  
-      CAN.sendMsgBuf(ID_V_BUS, 0, 0, 4, engData.v_bus.bytes);
+      // Read AC compressor request, true = AC requested
+      engData.AC_req = (digitalRead(PIN_AC_REQ) == AC_REQ_ACTIVE);
+
+      // Transmit bus voltage, fuel level, AC request and CEL over CAN
+      send_gaugedriver_status(CAN, &engData);
 
 
     #ifdef DEBUG
@@ -177,7 +177,7 @@ void loop(){
         Serial.print("p_oil = ");  Serial.print(engData.p_oil_psi);   Serial.print(", ");
         Serial.print("CEL = ");    Serial.print(engData.CEL);         Serial.print(", ");
         Serial.print("AC_req = "); Serial.print(engData.AC_req);      Serial.print(", ");
-        Serial.print("v_bus = ");  Serial.print(engData.v_bus.volts); Serial.print(", ");
+        Serial.print("v_bus = ");  Serial.print(engData.v_bus); Serial.print(", ");
         Serial.print("gas = ");    Serial.print(engData.gas_gallons); Serial.print(" "); Serial.print(engData.gas_perc); Serial.print(", ");
         Serial.print("Flags for oil, cool, voltage: ");
         Serial.print(engData.flag_oil_low);  Serial.print(",");

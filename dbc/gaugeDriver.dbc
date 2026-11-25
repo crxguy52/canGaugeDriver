@@ -1,0 +1,54 @@
+VERSION ""
+
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+    CAT_DEF_
+    CAT_
+    FILTER
+    BA_DEF_DEF_
+    EV_DATA_
+    ENVVAR_DATA_
+    SGTYPE_
+    SGTYPE_VAL_
+    BA_DEF_SGTYPE_
+    BA_SGTYPE_
+    SIG_GROUP_
+    SIG_TYPE_REF_
+    VAL_TABLE_
+    SIG_GROUP_
+    SIG_VALTYPE_
+    SIGTYPE_VALTYPE_
+    BO_TX_BU_
+    BA_DEF_REL_
+    BA_REL_
+    BA_DEF_DEFREL_
+    BU_SG_REL_
+    BU_EV_REL_
+    BU_BO_REL_
+    SG_MUL_VAL_
+
+BS_:
+
+BU_: GaugeDriver
+
+
+BO_ 1920 gaugedriver_status: 4 GaugeDriver
+    SG_ gd_v_bus : 7|8@0+ (0.1,0) [0|20.5] "V" Vector__XXX
+    SG_ gd_fuel_gal : 15|8@0+ (0.1,0) [0|15] "gal" Vector__XXX
+    SG_ gd_fuel_pct : 23|8@0+ (1,0) [0|100] "%" Vector__XXX
+    SG_ gd_ac_req : 24|1@0+ (1,0) [0|1] "" Vector__XXX
+    SG_ gd_cel : 25|1@0+ (1,0) [0|1] "" Vector__XXX
+
+CM_ BO_ 1920 "canGaugeDriver (CANBed) status, 10 Hz. Bus voltage, fuel level, A/C request and CEL inputs.";
+CM_ SG_ 1920 gd_v_bus "Bus voltage measured on the gauge driver ADC";
+CM_ SG_ 1920 gd_fuel_gal "Fuel level from the sender lookup table";
+CM_ SG_ 1920 gd_fuel_pct "Fuel level as percent of tank capacity";
+CM_ SG_ 1920 gd_ac_req "A/C request input from the dash switch";
+CM_ SG_ 1920 gd_cel "Check engine lamp input from the ECM MIL output";
+VAL_ 1920 gd_ac_req 1 "Requested" 0 "Not_Requested" ;
+VAL_ 1920 gd_cel 1 "On" 0 "Off" ;

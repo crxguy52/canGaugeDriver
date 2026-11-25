@@ -6,8 +6,8 @@
 
 // Scaling Values
 #define ADC2VBUS            0.01996 // Convert ADC reading to bus voltage
-#define RPM2HZ              0.0167  // RPM to Rev/s (Hz)
-#define MPH2HZ              1
+#define RPM2HZ              0.032   // RPM to outupt frequency (Hz)
+#define MPH2HZ              2.221
 
 // RX CAN message IDs
 #define ID_ENGINE_GENERAL_STATUS_1    201   // Contains engine_rpm. Transmitted at 80hz
@@ -16,7 +16,20 @@
 #define ID_ENGINE_GENERAL_STATUS_5    1233  // Contains eng_oil_pressure. Transmitted at 2hz
 
 // TX CAN message IDs
-#define ID_V_BUS            0x780
+#define ID_GAUGEDRIVER      0x780   // gaugedriver_status, see dbc/gaugeDriver.dbc
+#define DLC_GAUGEDRIVER     4
+
+// gaugedriver_status scaling (physical units per bit), must match the DBC
+#define GD_SCALE_V_BUS      0.1     // V/bit
+#define GD_SCALE_FUEL_GAL   0.1     // gal/bit
+#define GD_SCALE_FUEL_PCT   1.0     // %/bit
+#define GD_BIT_AC_REQ       0       // Bit position in byte 3
+#define GD_BIT_CEL          1       // Bit position in byte 3
+
+// Digital input polarity: pin level that means "active" (lamp on / AC requested)
+// Set to LOW if the baseboard inverts the signal
+#define CEL_IN_ACTIVE       LOW
+#define AC_REQ_ACTIVE       LOW
 
 // Pin assignments
 #define SPI_CS_PIN          17 
