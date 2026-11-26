@@ -66,6 +66,7 @@ volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
 volatile bool tach_enable             = 0;    // Set in main loop, read by the tach ISR
 volatile bool speed_enable            = 0;    // Set in main loop, read by the speedo ISR
 volatile bool warn_blink_flag         = 0;
+uint8_t i                             = 0;      // generic loop counter
 
 
 void setup()
@@ -132,19 +133,25 @@ void loop(){
       digitalWrite(PIN_LED, HIGH);
     #endif
   
-    // Check if there's CAN data available
-    if(CAN_MSGAVAIL == CAN.checkReceive()){
-      // If there's new data, read it. len: data length, buf: data buf
-      CAN.readMsgBuf(&len, buf);                    
-      unsigned long canId = CAN.getCanId();
+    // Check if there's CAN data available, drain the buffer
+    for(i=0; i<4; i++){
+        if(CAN_MSGAVAIL == CAN.checkReceive()){
+            // If there's new data, read it. len: data length, buf: data buf
+            CAN.readMsgBuf(&len, buf);                    
+            unsigned long canId = CAN.getCanId();
 
-      // update engData based on the message
-      handle_received_message(canId, buf, &engData);
+            // update engData based on the message
+            handle_received_message(canId, buf, &engData);
+        
+        }else{
+            break;
+        }        
+    }
 
     #ifdef CPU_LED_MAINLOOP
       digitalWrite(PIN_LED, LOW);     
     #endif         
-    }
+
 
     // If it's time to read bus voltage, read and transmit it 
     if (is_due(loopCount, &count_end_adc, COUNT_INTVL_V_BUS)) {
