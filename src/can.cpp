@@ -78,3 +78,34 @@ void send_gaugedriver_status(MCP_CAN &can, const EngineData *engData){
 
     can.sendMsgBuf(ID_GAUGEDRIVER, 0, 0, DLC_GAUGEDRIVER, txBuf);
 }
+
+
+#ifdef AC_COMPRESSOR_ENABLE
+void send_platform_gen_status(MCP_CAN &can, const EngineData *engData){
+    // Pack and transmit platform_general_status (0x1F1). Impersonates the BCM so the
+    // ECM will run the AC compressor. Unlisted signals are sent as 0, same as
+    // test_scripts/ac_compressor_cycle.py.
+    //   system_power_mode    = Run
+    //   ac_comp_mode_request = Engage if AC_req, else Disengage
+    //   ac_comp_sys_vda      = Available
+    //   ac_comp_norm_load_validity = Valid, ac_comp_normalized_load = 0
+    unsigned char txBuf[DLC_PLATFORM_GEN_STATUS] = {0};
+    uint8_t modeReq = engData->AC_req ? AC_MODE_ENGAGE : AC_MODE_DISENGAGE;
+
+    txBuf[PGS_BYTE_PWR_MODE] = PWR_MODE_RUN << PGS_SHIFT_PWR_MODE;
+    txBuf[PGS_BYTE_AC]       = (modeReq          << PGS_SHIFT_AC_MODE_REQ)
+                             | (AC_VDA_AVAILABLE << PGS_SHIFT_AC_VDA);
+
+    can.sendMsgBuf(ID_PLATFORM_GEN_STATUS, 0, 0, DLC_PLATFORM_GEN_STATUS, txBuf);
+}
+
+void send_platform_cfg_data(MCP_CAN &can){
+    // Pack and transmit platform_configuration_data (0x4E9). Only the compressor type
+    // is set. Unlisted signals are sent as 0, same as the Python reference.
+    unsigned char txBuf[DLC_PLATFORM_CFG_DATA] = {0};
+
+    txBuf[PCD_BYTE_AC_COMP_TYPE] = AC_COMP_TYPE_FIXED_CLUTCHED << PCD_SHIFT_AC_COMP_TYPE;
+
+    can.sendMsgBuf(ID_PLATFORM_CFG_DATA, 0, 0, DLC_PLATFORM_CFG_DATA, txBuf);
+}
+#endif

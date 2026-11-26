@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Arduino firmware that reads HS-GMLAN (500 kbps) from a GM ECU (LFX V6, E92 ECM) and drives the stock NB Miata cluster: tach, speedo, coolant gauge, and warning lights. It will also command the ECM's AC compressor by impersonating the BCM/Platform (not implemented yet in firmware; prototyped in Python). Used with a separate [baseboard](https://github.com/crxguy52/canGagueDriver-baseBoard) that level-shifts 12 V ↔ 5 V.
+Arduino firmware that reads HS-GMLAN (500 kbps) from a GM ECU (LFX V6, E92 ECM) and drives the stock NB Miata cluster: tach, speedo, coolant gauge, and warning lights. It will also command the ECM's AC compressor by impersonating the BCM/Platform (implemented in firmware but compiled out until `AC_COMPRESSOR_ENABLE` in `src/hwdefs.h` is uncommented; prototyped in Python). Used with a separate [baseboard](https://github.com/crxguy52/canGagueDriver-baseBoard) that level-shifts 12 V ↔ 5 V.
 
 **Target hardware:** the Seeed/Longan **CANBed**, which is an ATmega32U4 with an MCP2515 for classic CAN. A port to the **CANBed FD** is planned. The FD board uses the same 32U4 but an MCP2517FD CAN chip, so the port means swapping the vendored `Longan_CAN_MCP2515` library and redoing the RX mask/filter setup. The timer, ISR, and pin code should carry over unchanged.
 
@@ -42,7 +42,8 @@ loop(): on flag_mainloop
   ├─ every COUNT_INTVL_V_BUS ticks: read ADCs (vbus, fuel), CEL in, AC req;
   │     send_gaugedriver_status() on ID_GAUGEDRIVER (0x780, layout in
   │     dbc/gaugeDriver.dbc, copied into pyCANdash's gmlan_v1.10_custom.dbc)
-  ├─ two more scheduled slots (Platform Gen Status / Cfg Data): empty stubs for AC
+  ├─ if AC_COMPRESSOR_ENABLE: TX 0x1F1 Platform Gen Status (FREQ_V_BUS_HZ,
+  │     offset half a slot) and 0x4E9 Platform Cfg Data (1 Hz)
   └─ warn_blink_flag = any(flag_oil_low, flag_cool_hot, flag_v_low)
 
 Timer1 (free-running 16-bit, normal mode), three compare channels:

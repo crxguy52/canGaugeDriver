@@ -26,6 +26,42 @@
 #define GD_BIT_AC_REQ       0       // Bit position in byte 3
 #define GD_BIT_CEL          1       // Bit position in byte 3
 
+// ---- AC compressor: impersonate the Platform (BCM) so the ECM runs the compressor ----
+// Uncomment to transmit Platform General Status and Platform Configuration Data.
+// Leave commented out until the AC wiring is connected.
+//#define AC_COMPRESSOR_ENABLE
+
+#ifdef AC_COMPRESSOR_ENABLE
+  // Layouts are from platform_general_status / platform_configuration_data in
+  // test_scripts/gmlan_v1.8_custom.dbc (GMW8762 4.2.3.19, 4.2.3.23).
+  // Every signal set here fits inside one byte, so a Motorola start bit maps to
+  // byte = start / 8, LSB shift = (start % 8) - (length - 1).
+  #define ID_PLATFORM_GEN_STATUS    0x1F1   // platform_general_status
+  #define DLC_PLATFORM_GEN_STATUS   8
+  #define ID_PLATFORM_CFG_DATA      0x4E9   // platform_configuration_data
+  #define DLC_PLATFORM_CFG_DATA     8
+
+  // platform_general_status signal positions
+  #define PGS_BYTE_PWR_MODE         0       // system_power_mode, 2 bits
+  #define PGS_SHIFT_PWR_MODE        0
+  #define PGS_BYTE_AC               1       // AC compressor signals are all in byte 1
+  #define PGS_SHIFT_AC_MODE_REQ     3       // ac_comp_mode_request, 2 bits
+  #define PGS_SHIFT_AC_LOAD_INVALID 2       // ac_comp_norm_load_validity, 1 bit (0 = valid)
+  #define PGS_SHIFT_AC_VDA          1       // ac_comp_sys_vda, 1 bit
+
+  // platform_general_status signal values
+  #define PWR_MODE_RUN              2
+  #define AC_MODE_DISENGAGE_NOW     0       // Disengage Immediately
+  #define AC_MODE_DISENGAGE         1       // Graceful disengage
+  #define AC_MODE_ENGAGE            2
+  #define AC_VDA_AVAILABLE          1
+
+  // platform_configuration_data signal positions and values
+  #define PCD_BYTE_AC_COMP_TYPE     1       // ac_compressor_type, 3 bits
+  #define PCD_SHIFT_AC_COMP_TYPE    5
+  #define AC_COMP_TYPE_FIXED_CLUTCHED 1     // Fixed Displacement Clutched
+#endif
+
 // Digital input polarity: pin level that means "active" (lamp on / AC requested)
 // Set to LOW if the baseboard inverts the signal
 #define CEL_IN_ACTIVE       LOW

@@ -26,10 +26,10 @@ Timer0 sets a flag at MAIN_INT_FREQ_HZ; each tick the main loop:
   - At FREQ_V_BUS_HZ
     - Reads inputs (bus voltage, fuel level, CEL pin, AC request), transmits them in gaugedriver_status over CAN
 
-  - At FREQ_V_BUS_HZ, offset by half an interval
+  - At FREQ_V_BUS_HZ, offset by half an interval (only if AC_COMPRESSOR_ENABLE)
     - Transmits Platform General Status (AC compressor request)
 
-  - At FREQ_1HZ
+  - At FREQ_1HZ (only if AC_COMPRESSOR_ENABLE)
     - Transmits Platform Configuration Data (AC compressor type)
 
   - Sets all outputs from engData (outputs.cpp): lights, coolant PWM,
@@ -188,11 +188,18 @@ void loop(){
     }
 
     // If it's time, transmit Platform General Status (AC compressor request)
+    // AC_req is refreshed in the ADC slot above, at the same rate
     if (is_due(loopCount, &count_end_patform_gen_stat, COUNT_INTVL_V_BUS)) {
+      #ifdef AC_COMPRESSOR_ENABLE
+        send_platform_gen_status(CAN, &engData);
+      #endif
     }
 
     // If it's time, transmit Platform Configuration Data (AC compressor type)
     if (is_due(loopCount, &count_end_platform_cfg_data, COUNT_INTVL_1HZ)) {
+      #ifdef AC_COMPRESSOR_ENABLE
+        send_platform_cfg_data(CAN);
+      #endif
     }
 
     // Set the outputs based on the data and measurements we've received
