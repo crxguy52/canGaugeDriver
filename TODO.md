@@ -8,7 +8,7 @@ Lower-priority issues found in code review. Nothing here blocks the current firm
 
 ## Robustness
 - [ ] No CAN-silence timeout. If the ECM stops transmitting, the tach, speedo, and warning flags freeze at their last values. Zero `rpm` and `mph` and clear the flags if no frame arrives within a timeout.
-- [ ] Only one CAN frame is read per main-loop tick. Drain the RX buffers with `while (CAN_MSGAVAIL == CAN.checkReceive())` so a burst can't overflow the MCP2515's two buffers.
+
 
 ## Open design questions
 - [ ] `flag_cool_hot` isn't gated on `RPM_ENGINE_RUNNING`, so after a hot shutdown the SRS blinks at key-on until the coolant drops below `COOL_T_HIGH`. Oil and voltage are gated. Gate coolant too?

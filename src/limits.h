@@ -12,9 +12,6 @@
 
 // Value Thresholds
 // LFX spec is 10psi at idle, 30psi at 2,000 RPM
-#define P_OIL_LOW_RPM         2000    // Below this RPM low1 is used, above low2        
-#define P_OIL_LOW1_PSI        5
-#define P_OIL_LOW2_PSI        20
 #define V_BUS_LOW             12.5
 #define RPM_ENGINE_RUNNING    100     // Above this RPM the engine is considered running; warnings only blink while running
 #define RPM_SHIFT             6800

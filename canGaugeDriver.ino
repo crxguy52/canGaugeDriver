@@ -66,7 +66,6 @@ volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
 volatile bool tach_enable             = 0;    // Set in main loop, read by the tach ISR
 volatile bool speed_enable            = 0;    // Set in main loop, read by the speedo ISR
 volatile bool warn_blink_flag         = 0;
-uint8_t i                             = 0;      // generic loop counter
 
 
 void setup()
@@ -122,7 +121,6 @@ void setup()
 }
 
 
-
 void loop(){
 
   if(flag_mainloop == 1){     // Main loop flag is set in TIMER0 interrupt 
@@ -134,7 +132,7 @@ void loop(){
     #endif
   
     // Check if there's CAN data available, drain the buffer
-    for(i=0; i<4; i++){
+    for(uint8_t i=0; i<4; i++){
         if(CAN_MSGAVAIL == CAN.checkReceive()){
             // If there's new data, read it. len: data length, buf: data buf
             CAN.readMsgBuf(&len, buf);                    
