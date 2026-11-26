@@ -171,14 +171,15 @@ void loop(){
 
 
     #ifdef DEBUG
-        Serial.print("RPM = ");    Serial.print(engData.rpm);         Serial.print(", ");
-        Serial.print("mph = ");    Serial.print(engData.mph);         Serial.print(", ");
+        // Serial.print("RPM = ");    Serial.print(engData.rpm);         Serial.print(", ");
+        // Serial.print("mph = ");    Serial.print(engData.mph);         Serial.print(", ");
         Serial.print("t_cool = "); Serial.print(engData.t_cool);      Serial.print(", ");
-        Serial.print("p_oil = ");  Serial.print(engData.p_oil_psi);   Serial.print(", ");
-        Serial.print("CEL = ");    Serial.print(engData.CEL);         Serial.print(", ");
-        Serial.print("AC_req = "); Serial.print(engData.AC_req);      Serial.print(", ");
+        Serial.print("p_oil, lim = ");  Serial.print(engData.p_oil_psi);   Serial.print(", ");
+        Serial.print(interp1f(engData.rpm, oilLimRPM, oilLimPsi, oilLimNpts)); Serial.print(", ");
+        // Serial.print("CEL = ");    Serial.print(engData.CEL);         Serial.print(", ");
+        // Serial.print("AC_req = "); Serial.print(engData.AC_req);      Serial.print(", ");
         Serial.print("v_bus = ");  Serial.print(engData.v_bus); Serial.print(", ");
-        Serial.print("gas = ");    Serial.print(engData.gas_gallons); Serial.print(" "); Serial.print(engData.gas_perc); Serial.print(", ");
+        // Serial.print("gas = ");    Serial.print(engData.gas_gallons); Serial.print(" "); Serial.print(engData.gas_perc); Serial.print(", ");
         Serial.print("Flags for oil, cool, voltage: ");
         Serial.print(engData.flag_oil_low);  Serial.print(",");
         Serial.print(engData.flag_cool_hot); Serial.print(",");

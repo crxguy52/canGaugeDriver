@@ -1,4 +1,6 @@
 #pragma once
+#include "inttypes.h"
+
 #define COOL_T_COLD         0       // Temperature at and below which the coolant gauge is fully off
 #define COOL_PWM_COLD       0       // PWM value for a fully-off (cold) coolant gauge
 #define COOL_T_LOW          80      // Temperature at which coolant gauge should be on the L line
@@ -24,3 +26,8 @@
 //#define MIN_MPH               TIMER1_FREQ/(2*(pow(2, 16)-1)*MPH2HZ)
 #define MIN_RPM               200
 #define MIN_MPH               5
+
+
+extern const float oilLimRPM[];
+extern const float oilLimPsi[];
+extern const uint8_t oilLimNpts;

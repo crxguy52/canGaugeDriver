@@ -1,6 +1,7 @@
 #include "outputs.h"
 #include "utils/utils.h"
 #include <util/atomic.h>
+#include "limits.h"
 
 // The slowest gauge interval (at MIN_RPM / MIN_MPH) must fit in the 16-bit compare
 // register, otherwise the float -> uint16_t conversion below is undefined
@@ -44,12 +45,9 @@ void set_outputs(EngineData *engData){
 
     // Oil pressure
     // Set the threshold based on rpm
-    float thresh = P_OIL_LOW1_PSI;
-    if(engData->rpm > P_OIL_LOW_RPM){
-        thresh = P_OIL_LOW2_PSI;
-    }             
+    float oilThreshPsi = interp1f(engData->rpm, oilLimRPM, oilLimPsi, oilLimNpts);   
 
-    if(engData->p_oil_psi < thresh){
+    if(engData->p_oil_psi < oilThreshPsi){
         digitalWrite(PIN_OILP, LIGHT_ON);
 
         if(engData->rpm > RPM_ENGINE_RUNNING){
