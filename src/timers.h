@@ -9,6 +9,16 @@
 
 #define TIMER1_PRESCALER    64      // Timer1 is a 16-bit counter
 
+// Timer4: software-routed PWM for the fuel gauge. Matches analogWrite's frequency
+// so the dutyTest calibration carries over.
+#define TIMER4_PRESCALER    128     // timer4_init() only implements this one value
+#define TIMER4_TOP          255     // 8-bit PWM, same resolution as analogWrite
+#define TIMER4_PWM_FREQ     (F_CPU / TIMER4_PRESCALER / (TIMER4_TOP + 1))
+
+#if TIMER4_PRESCALER != 128
+  #error "timer4_init() only sets the clock select bits for one prescaler, update it if TIMER4_PRESCALER changes"
+#endif
+
 
 // Calculate the prescaler and compare value
 #define COUNT_INTVL_V_BUS     (MAIN_INT_FREQ_HZ / FREQ_V_BUS_HZ)
@@ -56,3 +66,6 @@
 void timer0_init(void);
 
 void timer1_init(void);
+
+// Configure timer4 as a fast-PWM timebase with no output pins connected
+void timer4_init(void);

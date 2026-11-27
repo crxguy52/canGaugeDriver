@@ -32,7 +32,7 @@ Timer0 sets a flag at MAIN_INT_FREQ_HZ; each tick the main loop:
   - At FREQ_1HZ (only if AC_COMPRESSOR_ENABLE)
     - Transmits Platform Configuration Data (AC compressor type)
 
-  - Sets all outputs from engData (outputs.cpp): lights, coolant PWM,
+  - Sets all outputs from engData (outputs.cpp): lights, coolant and fuel PWM,
     tach/speedo intervals and enables, warning flags
 
 Timer1 is used to drive variable frequency outputs
@@ -43,6 +43,11 @@ Timer1 is used to drive variable frequency outputs
     - If speed_enable, interrupt toggles PIN_SPEED, else holds it low
     - Always COMPB += count_intvl_speed
   - TIMER1 COMPC blinks PIN_SRS while warn_blink_flag is set (any warning flag active)
+
+Timer3 is left as Arduino set it up, so analogWrite drives the coolant gauge (PIN_COOLANT)
+
+Timer4 drives the fuel gauge PWM (PIN_FUEL) at TIMER4_PWM_FREQ, with no output pins connected
+  - TIMER4 OVF sets PIN_FUEL high, COMPA (OCR4A = fuel_duty) sets it low
 */
  
 
@@ -66,6 +71,7 @@ volatile uint16_t count_intvl_speed   = TIMER1_COMPARE_VALUE;
 volatile bool tach_enable             = 0;    // Set in main loop, read by the tach ISR
 volatile bool speed_enable            = 0;    // Set in main loop, read by the speedo ISR
 volatile bool warn_blink_flag         = 0;
+volatile uint8_t fuel_duty            = 0;    // Set in main loop, read by the Timer4 fuel PWM ISRs
 
 
 void setup()
@@ -86,7 +92,7 @@ void setup()
     pinMode(PIN_CEL_OUT,  OUTPUT);
     pinMode(PIN_COOLANT,  OUTPUT);
     pinMode(PIN_ABS,      OUTPUT);
-    pinMode(PIN_CRUISE,   OUTPUT);
+    pinMode(PIN_FUEL,     OUTPUT);
     pinMode(PIN_OILP,     OUTPUT);
     pinMode(PIN_TACH,     OUTPUT);
     pinMode(PIN_LED,      OUTPUT);
@@ -115,6 +121,9 @@ void setup()
 
     // Congifure timer1
     timer1_init();
+
+    // Configure timer4 for the fuel gauge PWM
+    timer4_init();
 
     // Enable global interrupts
     sei();

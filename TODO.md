@@ -4,7 +4,6 @@ Lower-priority issues found in code review. Nothing here blocks the current firm
 
 ##TODO
 - [ ] Port to FD board
-- [ ] Calibrate coolant / fuel gauge outputs
 
 ## Robustness
 - [ ] No CAN-silence timeout. If the ECM stops transmitting, the tach, speedo, and warning flags freeze at their last values. Zero `rpm` and `mph` and clear the flags if no frame arrives within a timeout.

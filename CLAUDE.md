@@ -38,25 +38,32 @@ Control flow:
 Timer0 COMPA ISR (MAIN_INT_FREQ_HZ) ──sets──> flag_mainloop
 loop(): on flag_mainloop
   ├─ CAN.checkReceive → handle_received_message()  (src/can.cpp)
-  │     decode into global EngineData; set lights, coolant PWM directly
+  │     decode into global EngineData
   ├─ every COUNT_INTVL_V_BUS ticks: read ADCs (vbus, fuel), CEL in, AC req;
   │     send_gaugedriver_status() on ID_GAUGEDRIVER (0x780, layout in
   │     dbc/gaugeDriver.dbc, copied into pyCANdash's gmlan_v1.10_custom.dbc)
   ├─ if AC_COMPRESSOR_ENABLE: TX 0x1F1 Platform Gen Status (FREQ_V_BUS_HZ,
   │     offset half a slot) and 0x4E9 Platform Cfg Data (1 Hz)
-  └─ warn_blink_flag = any(flag_oil_low, flag_cool_hot, flag_v_low)
+  └─ set_outputs() (src/outputs.cpp): lights, coolant/fuel PWM, tach/speedo
+        intervals, warn_blink_flag = any(flag_oil_low, flag_cool_hot, flag_v_low)
 
 Timer1 (free-running 16-bit, normal mode), three compare channels:
   COMPA → toggle tach pin,  OCR1A += count_intvl_tach
   COMPB → toggle speedo pin, OCR1B += count_intvl_speed
   COMPC → toggle SRS pin as warning blinker
+
+Timer3 (Arduino default)  → analogWrite on the coolant pin (OC3A)
+Timer4 (fast PWM, ~488 Hz, no OC pins connected) → fuel gauge
+  OVF   → fuel pin high
+  COMPA → fuel pin low,  OCR4A = fuel_duty
 ```
 
 Key points that span files:
 
 - **Timer0 is taken over** (`timer0_init`), so Arduino `millis()`, `delay()`, and `micros()` are wrong or broken after `setup()` calls it. Schedule work with `loopCount` and the `COUNT_INTVL_*` constants instead.
-- **Gauge frequency output** works by adding a half-period to the compare register on each ISR (`OCR1x += interval`). The interval math (`TIMER1_FREQ/(2*rpm*RPM2HZ)`) is currently commented out in `src/can.cpp`, so the tach and speedo run at the fixed `TIMER1_COMPARE_VALUE` interval.
-- **ISRs use `digitalWrite`/`digitalRead`** on the `hwdefs.h` pins, so pins are defined in one place. This costs a few µs per toggle, which is acceptable at gauge frequencies.
+- **Gauge frequency output** works by adding a half-period to the compare register on each ISR (`OCR1x += interval`). `set_outputs()` computes the interval (`TIMER1_FREQ/(2*rpm*RPM2HZ)`).
+- **Gauge duty-cycle output.** Timer1 owns OC1A/OC1B, so `analogWrite` is broken on the fuel (D9) and oil (D10) pins. Fuel uses Timer4 interrupts instead. Timer4's own outputs can't be used, because D9 (#OC4B) and D10 (OC4B) share `OCR4B`. Coolant (D5) is on Timer3, so `analogWrite` still works there. Oil is on/off via `digitalWrite`. Calibration values are in `src/limits.h`, measured with `test_scripts/dutyTest`.
+- **ISRs write the ports directly** (`PORTB`/`PORTD`) for speed. The bit used in each ISR must match the pin in `hwdefs.h`.
 - **Globals shared with ISRs** are defined in the `.ino` and `extern`-declared in `src/interrupts.h`. `engData` is read inside ISRs but is not `volatile`.
 - **CAN RX filtering** is done in hardware by the MCP2515 masks and filters in `setup()`. RXB0 takes RPM (`ID_ENGINE_GENERAL_STATUS_1`, the fastest message), and RXB1 takes the other three. To add an RX message, update the masks and filters there *and* add a `case` in `handle_received_message()`.
 - **The timing constants form a chain.** In `src/timers.h`, the preprocessor picks the Timer0 prescaler from `MAIN_INT_FREQ_HZ` and `F_CPU`, and every `COUNT_INTVL_*` value is derived from `MAIN_INT_FREQ_HZ`. Change frequencies there, not in the derived values.

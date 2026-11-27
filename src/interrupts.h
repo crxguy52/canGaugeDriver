@@ -12,3 +12,4 @@ extern volatile uint16_t count_intvl_speed;
 extern volatile bool tach_enable;
 extern volatile bool speed_enable;
 extern volatile bool warn_blink_flag;
+extern volatile uint8_t fuel_duty;

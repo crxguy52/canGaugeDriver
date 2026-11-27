@@ -6,9 +6,9 @@ send an integer: PWM duty, 0..PWM_MAX (clamped).
 
 Uses analogWrite, i.e. Arduino's default hardware PWM:
   coolant (D5) on Timer3, oil (D10) and fuel (D9) on Timer1.
-Note the firmware can't do this for oil/fuel (Timer1 drives tach/speedo there),
-so it will use software PWM at a different frequency. If the gauge response
-depends on PWM frequency, the duty -> needle calibration may not carry over exactly.
+Note the firmware can't do this for oil/fuel (Timer1 drives tach/speedo there).
+Fuel is PWM'd by Timer4 interrupts at about the same frequency as analogWrite
+and the same 8-bit duty, so this calibration carries over.
 
 Standalone sketch: Arduino can't include files from outside the sketch folder,
 so the pins below are copied from pinMap.xlsx. Keep them in sync.
@@ -18,7 +18,7 @@ For tach/speedo, use freqTest.
 enum TestOutput { OUT_COOLANT, OUT_OIL, OUT_FUEL };
 
 // ---- Pick the output under test ----
-const TestOutput TEST_OUTPUT = OUT_COOLANT;
+const TestOutput TEST_OUTPUT = OUT_OIL;
 
 // Pins
 const uint8_t PIN_COOLANT = 5;    // PC6, Timer3 PWM

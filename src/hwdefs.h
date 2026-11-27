@@ -4,6 +4,9 @@
 #define LIGHT_ON            HIGH    // Value to turn light on
 #define LIGHT_OFF           LOW     // Value to turn light off
 
+#define OIL_NO_PRESSURE     HIGH    // Value when gauge shows no pressure
+#define OIL_PRESSURE        LOW     // Value when gauge shows pressure
+
 // Scaling Values
 #define ADC2VBUS            0.01996 // Convert ADC reading to bus voltage
 #define RPM2HZ              0.032   // RPM to outupt frequency (Hz)
@@ -79,11 +82,13 @@
 #define PIN_COOLANT         5
 #define PIN_ABS             6
 #define PIN_SEATBELT        8
-#define PIN_CRUISE          9
+#define PIN_FUEL            9     // Port B5, PWM'd by the Timer4 ISRs (no hardware PWM, Timer1 owns OC1A)
 #define PIN_OILP            10
 #define PIN_TACH            11    // Port B7
 #define PIN_ALT             12
 #define PIN_LED             13
+
+#define PIN_SHIFT           PIN_ABS   // Shift light uses the ABS lamp
 
 #define ADC_VBUS 			A0
 #define ADC_GAS 			A1

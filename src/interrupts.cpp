@@ -32,3 +32,20 @@ ISR(TIMER1_COMPC_vect) {
   }
   OCR1C += WARN_BLINK_COUNTS;
 }
+
+// Fuel gauge software PWM on Timer4. The pin goes high at the start of each period
+// and low at the compare-A match. Duty 0 and TIMER4_TOP never toggle.
+// COMPA has a higher vector priority than OVF, so if both are pending at once the
+// pin ends high. Near the top that is correct; near the bottom it would give a full
+// high period, so keep the fuel table's lowest duty well above zero (or exactly zero).
+ISR(TIMER4_OVF_vect) {
+  if(fuel_duty > 0){
+    PORTB |= (1 << PB5);        // Digital pin 9, must match PIN_FUEL
+  }
+}
+
+ISR(TIMER4_COMPA_vect) {
+  if(fuel_duty < TIMER4_TOP){
+    PORTB &= ~(1 << PB5);       // Digital pin 9, must match PIN_FUEL
+  }
+}

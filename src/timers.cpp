@@ -69,3 +69,33 @@ void timer1_init() {
   // Enable compare match interrupts for A, B, and C
   TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B) | (1 << OCIE1C);
 }
+
+void timer4_init() {
+  // Fast PWM, TOP = OCR4C, at TIMER4_PWM_FREQ. No output pins are connected
+  // (all COM4x bits = 0): the ISRs drive PIN_FUEL instead. D9 is #OC4B, which
+  // would share OCR4B with the oil pin (OC4B), so hardware output isn't usable.
+  // Compare A sets the duty. OCR4A is double-buffered in PWM mode, so a new
+  // duty takes effect at TOP without a glitch.
+
+  // Overwrite Arduino's init() settings (phase/frequency-correct, /64)
+  TCCR4A = (1 << PWM4A);        // PWM mode on channel A, COM4A = 0 (pin disconnected)
+  TCCR4B = 0;                   // Stop the timer while configuring
+  TCCR4C = 0;                   // Channel D off
+  TCCR4D = 0;                   // WGM41:40 = 00 -> fast PWM
+  TCCR4E = 0;
+
+  // 10-bit registers: TC4H holds the high bits for the next write
+  TC4H  = 0;
+  OCR4C = TIMER4_TOP;
+  TC4H  = 0;
+  OCR4A = 0;
+  TC4H  = 0;
+  TCNT4 = 0;
+
+  // Clear pending flags, then enable overflow and compare A interrupts
+  TIFR4  = (1 << TOV4) | (1 << OCF4A);
+  TIMSK4 |= (1 << TOIE4) | (1 << OCIE4A);
+
+  // Start the clock at TIMER4_PRESCALER (CS43 alone selects it)
+  TCCR4B = (1 << CS43);
+}
